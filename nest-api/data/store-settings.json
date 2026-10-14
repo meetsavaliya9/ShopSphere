@@ -1,0 +1,13 @@
+{
+  "storeName": "ShopSphere",
+  "storeEmail": "support@shopsphere.com",
+  "storePhone": "+91 98765 43210",
+  "storeAddress": "ShopSphere HQ, Mumbai, Maharashtra, India",
+  "currency": "INR",
+  "taxRate": 0,
+  "shippingFee": 0,
+  "freeShippingThreshold": 500,
+  "allowCheckout": true,
+  "maintenanceMode": false,
+  "announcement": "Welcome to ShopSphere — Premium Curated Commerce"
+}

@@ -1,0 +1,45 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model category {
+  id          String    @id @db.VarChar(30)
+  name        String
+  nameKey     String    @unique(map: "Category_nameKey_key")
+  slug        String    @unique(map: "Category_slug_key")
+  description String?   @db.Text
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime
+  image       String?   @db.VarChar(2048)
+  isActive    Boolean   @default(true)
+  product     product[]
+
+  @@index([name], map: "Category_name_idx")
+}
+
+model product {
+  id             String   @id @db.VarChar(30)
+  name           String
+  slug           String   @unique(map: "Product_slug_key")
+  description    String?  @db.Text
+  price          Decimal  @db.Decimal(10, 2)
+  stock          Int      @default(0) @db.UnsignedInt
+  imageUrl       String?  @db.VarChar(2048)
+  isActive       Boolean  @default(true)
+  categoryId     String   @db.VarChar(30)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime
+  compareAtPrice Decimal? @db.Decimal(10, 2)
+  sku            String?  @unique(map: "Product_sku_key") @db.VarChar(100)
+  category       category @relation(fields: [categoryId], references: [id], map: "Product_categoryId_fkey")
+
+  @@index([categoryId, isActive], map: "Product_categoryId_isActive_idx")
+  @@index([createdAt], map: "Product_createdAt_idx")
+  @@index([name], map: "Product_name_idx")
+  @@index([price], map: "Product_price_idx")
+}

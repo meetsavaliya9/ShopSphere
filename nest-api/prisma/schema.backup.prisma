@@ -1,0 +1,196 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model category {
+  id          Int      @id @default(autoincrement())
+  name        String   @unique(map: "Category_name_key") @db.VarChar(100)
+  slug        String   @unique(map: "Category_slug_key") @db.VarChar(120)
+  description String?  @db.VarChar(500)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime
+}
+
+model product {
+  id            Int            @id @default(autoincrement())
+  name          String
+  description   String         @db.Text
+  price         Decimal        @db.Decimal(10, 2)
+  category      String         @db.VarChar(100)
+  inStock       Boolean        @default(true)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime
+  managerId     Int?
+  imageUrl      String?        @db.VarChar(2048)
+  imagePublicId String?        @db.VarChar(255)
+  cartitem      cartitem[]
+  orderitem     orderitem[]
+  manager       user?          @relation("ManagerProducts", fields: [managerId], references: [id], map: "Product_managerId_fkey")
+  wishlistitem  wishlistitem[]
+
+  @@index([name], map: "Product_name_idx")
+  @@index([category, price], map: "Product_category_price_idx")
+  @@index([managerId], map: "Product_managerId_idx")
+}
+
+model cart {
+  id        Int        @id @default(autoincrement())
+  userId    Int        @unique(map: "Cart_userId_key")
+  createdAt DateTime   @default(now())
+  updatedAt DateTime
+  user      user       @relation(fields: [userId], references: [id], onDelete: Cascade, map: "Cart_userId_fkey")
+  cartitem  cartitem[]
+}
+
+model cartitem {
+  id        Int      @id @default(autoincrement())
+  cartId    Int
+  productId Int
+  quantity  Int
+  createdAt DateTime @default(now())
+  updatedAt DateTime
+  cart      cart     @relation(fields: [cartId], references: [id], onDelete: Cascade, map: "CartItem_cartId_fkey")
+  product   product  @relation(fields: [productId], references: [id], onDelete: Cascade, map: "CartItem_productId_fkey")
+
+  @@unique([cartId, productId], map: "CartItem_cartId_productId_key")
+  @@index([productId], map: "CartItem_productId_idx")
+}
+
+model coupon {
+  id          Int       @id @default(autoincrement())
+  code        String    @unique(map: "Coupon_code_key") @db.VarChar(50)
+  discount    Int       @default(10)
+  minSpend    Decimal   @default(0.00) @db.Decimal(10, 2)
+  isActive    Boolean   @default(true)
+  expiresAt   DateTime?
+  description String?   @db.VarChar(255)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime
+}
+
+model order {
+  id              Int          @id @default(autoincrement())
+  userId          Int
+  idempotencyKey  String       @db.VarChar(64)
+  status          order_status @default(PAYMENT_PENDING)
+  totalAmount     Decimal      @db.Decimal(10, 2)
+  currency        String       @db.VarChar(3)
+  shippingAddress String       @db.LongText
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime
+  user            user         @relation(fields: [userId], references: [id], map: "Order_userId_fkey")
+  orderitem       orderitem[]
+  payment         payment?
+
+  @@unique([userId, idempotencyKey], map: "Order_userId_idempotencyKey_key")
+  @@index([status, createdAt], map: "Order_status_createdAt_idx")
+  @@index([userId, createdAt], map: "Order_userId_createdAt_idx")
+}
+
+model orderitem {
+  id          Int      @id @default(autoincrement())
+  orderId     Int
+  productId   Int?
+  productName String
+  unitPrice   Decimal  @db.Decimal(10, 2)
+  quantity    Int
+  createdAt   DateTime @default(now())
+  order       order    @relation(fields: [orderId], references: [id], onDelete: Cascade, map: "OrderItem_orderId_fkey")
+  product     product? @relation(fields: [productId], references: [id], map: "OrderItem_productId_fkey")
+
+  @@index([orderId], map: "OrderItem_orderId_idx")
+  @@index([productId], map: "OrderItem_productId_idx")
+}
+
+model payment {
+  id                Int            @id @default(autoincrement())
+  orderId           Int            @unique(map: "Payment_orderId_key")
+  razorpayOrderId   String?        @unique(map: "Payment_razorpayOrderId_key") @db.VarChar(64)
+  razorpayPaymentId String?        @unique(map: "Payment_razorpayPaymentId_key") @db.VarChar(64)
+  amount            Decimal        @db.Decimal(10, 2)
+  currency          String         @db.VarChar(3)
+  status            payment_status @default(PENDING)
+  failureCode       String?        @db.VarChar(100)
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime
+  order             order          @relation(fields: [orderId], references: [id], onDelete: Cascade, map: "Payment_orderId_fkey")
+
+  @@index([status, createdAt], map: "Payment_status_createdAt_idx")
+}
+
+model paymentwebhookevent {
+  eventId     String   @id @db.VarChar(100)
+  eventType   String   @db.VarChar(100)
+  processedAt DateTime @default(now())
+}
+
+model session {
+  id        String   @id @db.Char(64)
+  userId    Int
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  user      user     @relation(fields: [userId], references: [id], onDelete: Cascade, map: "Session_userId_fkey")
+
+  @@index([expiresAt], map: "Session_expiresAt_idx")
+  @@index([userId, expiresAt], map: "Session_userId_expiresAt_idx")
+}
+
+model user {
+  id              Int            @id @default(autoincrement())
+  email           String         @unique(map: "User_email_key") @db.VarChar(254)
+  name            String         @db.VarChar(100)
+  passwordHash    String         @db.VarChar(255)
+  role            user_role      @default(CUSTOMER)
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime
+  emailVerifiedAt DateTime?
+  otpChallengeId  String?        @unique(map: "User_otpChallengeId_key") @db.Char(64)
+  otpCodeHash     String?        @db.Char(64)
+  otpExpiresAt    DateTime?
+  otpResendAfter  DateTime?
+  otpAttempts     Int            @default(0)
+  otpPurpose      String?        @db.VarChar(16)
+  cart            cart?
+  order           order[]
+  managedProducts product[]      @relation("ManagerProducts")
+  session         session[]
+  wishlistitem    wishlistitem[]
+
+  @@index([role], map: "User_role_idx")
+}
+
+model wishlistitem {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  productId Int
+  createdAt DateTime @default(now())
+  product   product  @relation(fields: [productId], references: [id], onDelete: Cascade, map: "WishlistItem_productId_fkey")
+  user      user     @relation(fields: [userId], references: [id], onDelete: Cascade, map: "WishlistItem_userId_fkey")
+
+  @@unique([userId, productId], map: "WishlistItem_userId_productId_key")
+  @@index([productId], map: "WishlistItem_productId_idx")
+}
+
+enum order_status {
+  PAYMENT_PENDING
+  PAID
+  PAYMENT_FAILED
+  CANCELLED
+}
+
+enum user_role {
+  ADMIN
+  MANAGER
+  CUSTOMER
+}
+
+enum payment_status {
+  PENDING
+  CAPTURED
+  FAILED
+}

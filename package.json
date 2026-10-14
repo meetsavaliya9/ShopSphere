@@ -1,0 +1,17 @@
+{
+  "name": "shopsphere",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "node scripts/dev.js",
+    "dev:backend": "npm --prefix nest-api run start:dev",
+    "dev:frontend": "npm --prefix frontend run dev",
+    "start:backend": "npm --prefix nest-api start",
+    "start:frontend": "npm --prefix frontend start",
+    "build": "npm --prefix nest-api run build && npm --prefix frontend run build",
+    "test": "npm --prefix nest-api test && npm --prefix frontend test"
+  },
+  "engines": {
+    "node": ">=22.9.0"
+  }
+}

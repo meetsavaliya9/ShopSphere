@@ -1,0 +1,49 @@
+{
+  "name": "shopsphere-nest-api",
+  "version": "1.0.0",
+  "description": "ShopSphere NestJS API for the existing Next.js frontend",
+  "author": "",
+  "private": true,
+  "license": "UNLICENSED",
+  "scripts": {
+    "build": "node scripts/check-build.js",
+    "start": "node --use-system-ca --env-file-if-exists=.env index.js",
+    "start:dev": "nodemon --exec \"node --use-system-ca --env-file-if-exists=.env\" index.js",
+    "test": "jest --runInBand --config ./test/jest-e2e.json",
+    "test:cov": "jest --runInBand --coverage --config ./test/jest-e2e.json",
+    "test:e2e": "jest --runInBand --config ./test/jest-e2e.json",
+    "create:privileged-user": "node --use-system-ca --env-file-if-exists=.env scripts/create-privileged-user.js",
+    "reset:admin": "node --use-system-ca --env-file-if-exists=.env scripts/reset-admin.js"
+  },
+  "engines": {
+    "node": ">=22.15.0"
+  },
+  "dependencies": {
+    "@nestjs/common": "^11.1.20",
+    "@nestjs/core": "^11.1.20",
+    "@nestjs/platform-express": "^11.1.20",
+    "@prisma/client": "^6.19.0",
+    "bcryptjs": "^3.0.3",
+    "express": "^5.1.0",
+    "nodemailer": "^10.1.0",
+    "reflect-metadata": "^0.2.0",
+    "rxjs": "^7.2.0"
+  },
+  "devDependencies": {
+    "@nestjs/testing": "^11.0.1",
+    "jest": "30.3.0",
+    "maildev": "^2.1.0",
+    "nodemon": "3.1.14",
+    "prisma": "^6.19.0",
+    "supertest": "7.2.2"
+  },
+  "jest": {
+    "moduleFileExtensions": [
+      "js",
+      "json"
+    ],
+    "rootDir": "src",
+    "testRegex": ".spec.js$",
+    "coverageDirectory": "../coverage"
+  }
+}

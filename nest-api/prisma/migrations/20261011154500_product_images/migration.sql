@@ -1,0 +1,3 @@
+ALTER TABLE `Product`
+    ADD COLUMN `imageUrl` VARCHAR(2048) NULL,
+    ADD COLUMN `imagePublicId` VARCHAR(255) NULL;
