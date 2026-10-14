@@ -7,8 +7,8 @@ import {
   ArrowUpRight,
   Boxes,
   CreditCard,
-  DollarSign,
   Download,
+  IndianRupee,
   Package,
   Plus,
   RefreshCw,
@@ -137,7 +137,7 @@ export default function AdminOverviewPage() {
           title="Total Revenue"
           value={`₹${metrics.totalRevenue.toLocaleString("en-IN", { minimumFractionDigits: 2 })}`}
           description="Verified completed orders with captured payments"
-          icon={DollarSign}
+          icon={IndianRupee}
         />
         <StatCard
           title="Total Orders"

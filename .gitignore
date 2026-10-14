@@ -5,3 +5,10 @@ coverage/
 .env.*
 !.env.example
 npm-debug.log*
+shopsphere.sql
+.vercel
+.env*
+cookiejar.txt
+csrf.out
+cookiejar.txt
+csrf.out

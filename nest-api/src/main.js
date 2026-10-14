@@ -10,7 +10,7 @@ const {
 } = require("./auth/auth-request-parsing");
 const { AllExceptionsFilter } = require("./common/filters/all-exceptions.filter");
 
-const DEFAULT_HOST = "127.0.0.1";
+const DEFAULT_HOST = "0.0.0.0";
 const DEFAULT_PORT = 3004;
 let bootstrapPromise;
 
