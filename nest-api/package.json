@@ -7,7 +7,7 @@
   "license": "UNLICENSED",
   
 "scripts": {
-  "build": "node scripts/check-build.js",
+  "build": "npx prisma generate && node scripts/check-build.js",
   "start": "node --use-system-ca --env-file-if-exists=.env index.js",
   "start:dev": "nodemon --exec \"node --use-system-ca --env-file-if-exists=.env\" index.js",
   "test": "jest --runInBand --config ./test/jest-e2e.json",
