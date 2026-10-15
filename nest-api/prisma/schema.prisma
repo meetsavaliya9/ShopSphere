@@ -40,10 +40,11 @@ model product {
   manager             user?                   @relation("ManagerProducts", fields: [managerId], references: [id], map: "Product_managerId_fkey")
   wishlistitem        wishlistitem[]
 
-  @@index([name], map: "Product_name_idx")
-  @@index([category, price], map: "Product_category_price_idx")
-  @@index([managerId], map: "Product_managerId_idx")
-  @@map("Product")
+    @@index([name], map: "Product_name_idx")
+    @@index([category, price], map: "Product_category_price_idx")
+    @@index([managerId], map: "Product_managerId_idx")
+    @@map("Product")
+
 }
 
 model cart {
