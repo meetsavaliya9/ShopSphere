@@ -62,7 +62,28 @@ function getServiceEndpoint(environmentVariable, path) {
     throw new ApiError(`${environmentVariable} must use HTTP or HTTPS.`, 500);
   }
 
-  return `${baseUrl.replace(/\/+$/, "")}${path}`;
+  const configuredPrefix = parsedUrl.pathname.replace(/\/+$/, "");
+  if (configuredPrefix && configuredPrefix !== "/api/v1") {
+    throw new ApiError(`${environmentVariable} must be a backend origin or end in /api/v1.`, 500);
+  }
+  if (parsedUrl.search || parsedUrl.hash) {
+    throw new ApiError(`${environmentVariable} must not include a query string or fragment.`, 500);
+  }
+
+  let requestedUrl;
+  try {
+    requestedUrl = new URL(path, parsedUrl.origin);
+  } catch {
+    throw new ApiError("The backend API path is invalid.", 500);
+  }
+  if (requestedUrl.origin !== parsedUrl.origin) {
+    throw new ApiError("The backend API path must remain on the configured service.", 500);
+  }
+
+  const apiPath = requestedUrl.pathname === "/api/v1" || requestedUrl.pathname.startsWith("/api/v1/")
+    ? requestedUrl.pathname
+    : `/api/v1${requestedUrl.pathname}`;
+  return `${parsedUrl.origin}${apiPath}${requestedUrl.search}`;
 }
 
 module.exports = { ApiError, getServiceEndpoint, requestJson };

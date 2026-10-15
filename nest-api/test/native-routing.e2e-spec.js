@@ -60,6 +60,20 @@ describe("Native NestJS routing", () => {
       .get("/api/v1/health")
       .expect(200)
       .expect({ data: { status: "ok", application: "ShopSphere NestJS API" } });
+
+    await request(app.getHttpServer())
+      .get("/api/v1/auth/me")
+      .expect(401);
+
+    await request(app.getHttpServer())
+      .get("/api/v1/store/settings")
+      .expect(200)
+      .expect((response) => {
+        expect(response.body.data).toEqual(expect.objectContaining({
+          storeName: expect.any(String),
+          currency: expect.any(String)
+        }));
+      });
   });
 
   it("requires a signed-in account for customer and admin routes", async () => {

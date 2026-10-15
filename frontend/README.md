@@ -12,6 +12,8 @@ ShopSphere's storefront and dashboards use the Next.js App Router, JavaScript/JS
 
 The defaults are Next.js at `http://127.0.0.1:3000` and NestJS at `http://127.0.0.1:3004`; `frontend/.env.local` contains the standalone frontend default. If starting Next.js directly, keep `NEST_API_URL` aligned with the NestJS bind address and port. No standalone `express-api` service is part of the runtime.
 
+For Vercel, set the server-side `NEST_API_URL` to the NestJS origin, or to that origin with `/api/v1`; the API client applies `/api/v1` exactly once. Do not use a `NEXT_PUBLIC_` variable for the backend URL.
+
 ## Current API coverage
 
 NestJS provides authentication (HTTP-only session cookies, CSRF protection, OTP), health, products, category management, customer cart/wishlist, product/user administration, manager inventory, customer orders, payment verification/webhooks, and admin order/payment endpoints. Roles and session ownership are checked by the backend. Inventory Managers use the shared manager dashboard, and each inventory permission is configured by an Admin and enforced by the NestJS API.

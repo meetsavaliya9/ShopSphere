@@ -63,6 +63,40 @@ test("service URL construction appends paths and requires server configuration",
   );
 });
 
+test("service URL construction adds the API prefix once and preserves query strings", () => {
+  const originalUrl = process.env.NEST_API_URL;
+  try {
+    process.env.NEST_API_URL = "https://service.test/";
+    assert.equal(
+      getServiceEndpoint("NEST_API_URL", "/auth/me?expand=roles"),
+      "https://service.test/api/v1/auth/me?expand=roles"
+    );
+
+    process.env.NEST_API_URL = "https://service.test/api/v1/";
+    assert.equal(
+      getServiceEndpoint("NEST_API_URL", "/api/v1/store/settings?lang=en"),
+      "https://service.test/api/v1/store/settings?lang=en"
+    );
+  } finally {
+    if (originalUrl === undefined) delete process.env.NEST_API_URL;
+    else process.env.NEST_API_URL = originalUrl;
+  }
+});
+
+test("service URL construction rejects unexpected base paths", () => {
+  const originalUrl = process.env.NEST_API_URL;
+  try {
+    process.env.NEST_API_URL = "https://service.test/api";
+    assert.throws(
+      () => getServiceEndpoint("NEST_API_URL", "/auth/csrf"),
+      (error) => error instanceof ApiError && error.status === 500
+    );
+  } finally {
+    if (originalUrl === undefined) delete process.env.NEST_API_URL;
+    else process.env.NEST_API_URL = originalUrl;
+  }
+});
+
 test("customer currency formatting uses INR with Indian grouping and two decimals", () => {
   assert.equal(formatPrice(1299), "₹1,299.00");
 });
