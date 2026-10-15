@@ -199,7 +199,7 @@ model inventorymanagerpermission {
 
   @@id([userId, permission])
   @@index([permission], map: "InventoryManagerPermission_permission_idx")
-  @@map("InventoryManagerPermission")
+  @@map("inventorymanagerpermission")
 }
 
 model customerpermission {
@@ -207,7 +207,7 @@ model customerpermission {
   enabled    Boolean  @default(true)
   updatedAt  DateTime @updatedAt
 
-  @@map("CustomerPermission")
+  @@map("customerpermission")
 }
 
 model inventorystockhistory {
@@ -228,7 +228,7 @@ model inventorystockhistory {
 
   @@index([productId, createdAt], map: "InventoryStockHistory_productId_createdAt_idx")
   @@index([userId, createdAt], map: "InventoryStockHistory_userId_createdAt_idx")
-  @@map("InventoryStockHistory")
+  @@map("inventorystockhistory")
 }
 
 model wishlistitem {
