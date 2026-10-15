@@ -14,6 +14,8 @@ model category {
   description String?  @db.VarChar(500)
   createdAt   DateTime @default(now())
   updatedAt   DateTime
+
+  @@map("Category")
 }
 
 model product {
@@ -51,6 +53,8 @@ model cart {
   updatedAt DateTime
   user      user       @relation(fields: [userId], references: [id], onDelete: Cascade, map: "Cart_userId_fkey")
   cartitem  cartitem[]
+
+  @@map("Cart")
 }
 
 model cartitem {
@@ -65,6 +69,7 @@ model cartitem {
 
   @@unique([cartId, productId], map: "CartItem_cartId_productId_key")
   @@index([productId], map: "CartItem_productId_idx")
+  @@map("CartItem")
 }
 
 model coupon {
@@ -81,6 +86,8 @@ model coupon {
   startsAt     DateTime?
   usageLimit   Int?
   usageCount   Int       @default(0)
+
+  @@map("Coupon")
 }
 
 model order {
@@ -101,6 +108,7 @@ model order {
   @@unique([userId, idempotencyKey], map: "Order_userId_idempotencyKey_key")
   @@index([status, createdAt], map: "Order_status_createdAt_idx")
   @@index([userId, createdAt], map: "Order_userId_createdAt_idx")
+  @@map("Order")
 }
 
 model orderitem {
@@ -116,6 +124,7 @@ model orderitem {
 
   @@index([orderId], map: "OrderItem_orderId_idx")
   @@index([productId], map: "OrderItem_productId_idx")
+  @@map("OrderItem")
 }
 
 model payment {
@@ -132,12 +141,15 @@ model payment {
   order             order          @relation(fields: [orderId], references: [id], onDelete: Cascade, map: "Payment_orderId_fkey")
 
   @@index([status, createdAt], map: "Payment_status_createdAt_idx")
+  @@map("Payment")
 }
 
 model paymentwebhookevent {
   eventId     String   @id @db.VarChar(100)
   eventType   String   @db.VarChar(100)
   processedAt DateTime @default(now())
+
+  @@map("PaymentWebhookEvent")
 }
 
 model session {
@@ -149,6 +161,7 @@ model session {
 
   @@index([expiresAt], map: "Session_expiresAt_idx")
   @@index([userId, expiresAt], map: "Session_userId_expiresAt_idx")
+  @@map("Session")
 }
 
 model user {
@@ -185,12 +198,15 @@ model inventorymanagerpermission {
 
   @@id([userId, permission])
   @@index([permission], map: "InventoryManagerPermission_permission_idx")
+  @@map("InventoryManagerPermission")
 }
 
 model customerpermission {
   permission String   @id @db.VarChar(64)
   enabled    Boolean  @default(true)
   updatedAt  DateTime @updatedAt
+
+  @@map("CustomerPermission")
 }
 
 model inventorystockhistory {
@@ -211,6 +227,7 @@ model inventorystockhistory {
 
   @@index([productId, createdAt], map: "InventoryStockHistory_productId_createdAt_idx")
   @@index([userId, createdAt], map: "InventoryStockHistory_userId_createdAt_idx")
+  @@map("InventoryStockHistory")
 }
 
 model wishlistitem {
@@ -223,6 +240,7 @@ model wishlistitem {
 
   @@unique([userId, productId], map: "WishlistItem_userId_productId_key")
   @@index([productId], map: "WishlistItem_productId_idx")
+  @@map("WishlistItem")
 }
 
 enum order_status {
