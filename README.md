@@ -9,7 +9,7 @@ NestJS currently uses its standard HTTP platform adapter. That adapter is an int
 - Node.js 22.15 or newer and npm.
 - A running local MySQL server (for example, XAMPP).
 - `nest-api/.env` with `DATABASE_URL` targeting the existing XAMPP `shopsphere` database and a private `CSRF_SECRET` of at least 32 bytes.
-- `frontend/.env.local` with the server-only `NEST_API_URL=http://127.0.0.1:3003/api/v1`.
+- For independently started services, `frontend/.env.local` must set the server-only `NEST_API_URL` to the NestJS URL (by default, `http://127.0.0.1:3004/api/v1`).
 
 Optional SMTP, Cloudinary, and Razorpay settings are documented in `nest-api/.env.example`. Keep environment files private and do not put backend secrets in frontend configuration. The configured database contains existing ShopSphere data: preserve it, and do not reset, drop, recreate, or migrate it without a reviewed plan and explicit approval.
 
@@ -38,7 +38,7 @@ npm run dev:backend
 npm run dev:frontend
 ```
 
-The frontend defaults to `http://127.0.0.1:3000`; the NestJS health endpoint is `http://127.0.0.1:3003/api/v1/health`. Next.js server-side route handlers proxy API requests to NestJS and preserve session cookies and CSRF headers.
+The frontend defaults to `http://127.0.0.1:3000`; the NestJS health endpoint defaults to `http://127.0.0.1:3004/api/v1/health`. Start both services with `npm run dev` to have the launcher align the frontend proxy URL with the configured NestJS `PORT`. Next.js server-side route handlers proxy API requests to NestJS and preserve session cookies and CSRF headers.
 
 ## Backend functionality and checks
 

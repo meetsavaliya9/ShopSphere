@@ -355,20 +355,6 @@ export function SiteHeader() {
                           Create Account
                         </Link>
                       </div>
-                      <div className="border-t border-line pt-2.5">
-                        <Link
-                          href="/login?next=/admin"
-                          onClick={() => setAccountMenuOpen(false)}
-                          className="flex items-center justify-between rounded-lg px-2 py-1.5 text-xs font-medium text-muted hover:bg-surface hover:text-ink transition-colors"
-                          role="menuitem"
-                        >
-                          <span className="flex items-center gap-2">
-                            <Shield size={14} className="text-muted" />
-                            Admin & Staff Portal
-                          </span>
-                          <span className="text-[10px] text-muted">→</span>
-                        </Link>
-                      </div>
                     </div>
                   )}
                 </div>
@@ -538,14 +524,6 @@ export function SiteHeader() {
                         Register
                       </Link>
                     </div>
-                    <Link
-                      href="/login?next=/admin"
-                      onClick={() => setMobileMenuOpen(false)}
-                      className="flex items-center justify-center gap-2 rounded-lg border border-line py-2 text-center text-xs font-medium text-muted hover:bg-surface hover:text-ink transition-colors"
-                    >
-                      <Shield size={14} />
-                      <span>Admin & Staff Portal</span>
-                    </Link>
                   </div>
                 )}
               </div>

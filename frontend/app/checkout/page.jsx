@@ -1,5 +1,6 @@
 import { requireServerUser } from "../../lib/server/require-user";
 import CheckoutClient from "./checkout-client";
+import { RoleGate } from "../../components/role-gate";
 
 export const dynamic = "force-dynamic";
 
@@ -9,5 +10,5 @@ export default async function CheckoutPage() {
     permissions: ["ACCESS_CHECKOUT"],
     nextPath: "/checkout"
   });
-  return <CheckoutClient user={user} />;
+  return <RoleGate roles={["CUSTOMER"]}><CheckoutClient user={user} /></RoleGate>;
 }

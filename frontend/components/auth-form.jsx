@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
+import { getPostLoginPath } from "../lib/auth/redirect";
 import { useAuth } from "./auth-provider";
 
 export function AuthForm({ register = false }) {
@@ -11,7 +12,7 @@ export function AuthForm({ register = false }) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const [registered, setRegistered] = useState(false);
-  const [isAdminPortal, setIsAdminPortal] = useState(false);
+  const [email, setEmail] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [verification, setVerification] = useState(null);
   const [otpCode, setOtpCode] = useState("");
@@ -20,8 +21,6 @@ export function AuthForm({ register = false }) {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     setRegistered(params.get("registered") === "1");
-    const next = params.get("next");
-    setIsAdminPortal(Boolean(next && next.startsWith("/admin")));
   }, []);
 
   useEffect(() => {
@@ -32,22 +31,7 @@ export function AuthForm({ register = false }) {
 
   function redirectFor(user) {
     const next = new URLSearchParams(window.location.search).get("next");
-    const safeNext = next && next.startsWith("/") && !next.startsWith("//") ? next : null;
-    if (user.role === "INVENTORY_MANAGER") {
-      router.replace(safeNext?.startsWith("/manager") ? safeNext : "/manager");
-      return;
-    }
-    if (user.role === "ADMIN") {
-      router.replace(safeNext?.startsWith("/admin") ? safeNext : "/admin");
-      return;
-    }
-    if (user.role === "MANAGER") {
-      router.replace(safeNext?.startsWith("/manager") ? safeNext : "/manager");
-      return;
-    }
-    router.replace(safeNext && !safeNext.startsWith("/admin") && !safeNext.startsWith("/manager")
-      ? safeNext
-      : "/account");
+    router.replace(getPostLoginPath(user, next));
   }
 
   async function handleSubmit(event) {
@@ -121,29 +105,16 @@ export function AuthForm({ register = false }) {
 
   return (
     <section className="mx-auto max-w-[540px] px-6 py-16 sm:py-24">
-      {isAdminPortal && !register ? (
-        <div className="flex items-center gap-2">
-          <p className="text-[9px] font-semibold uppercase tracking-[0.19em] text-muted">ShopSphere</p>
-          <span className="rounded bg-zinc-900 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-white">
-            Admin Portal
-          </span>
-        </div>
-      ) : (
-        <p className="text-[9px] font-semibold uppercase tracking-[0.19em] text-muted">Shopsphere account</p>
-      )}
+      <p className="text-[9px] font-semibold uppercase tracking-[0.19em] text-muted">Shopsphere account</p>
       <h1 className="mt-4 font-serif text-5xl font-normal tracking-[-0.06em]">
         {register
           ? "Create your account."
-          : isAdminPortal
-            ? "Administrator Sign in."
-            : "Welcome back."}
+          : "Welcome back."}
       </h1>
       <p className="mt-4 text-sm leading-7 text-muted">
         {register
           ? "New accounts begin with customer access."
-          : isAdminPortal
-            ? "Sign in to access the ShopSphere management dashboard. Direct password verification without OTP."
-            : "Sign in to continue to your account."}
+          : "Sign in to continue to your account."}
       </p>
       {!register && registered && (
         <p className="mt-5 border border-line bg-surface p-4 text-xs leading-6" role="status">
@@ -166,7 +137,12 @@ export function AuthForm({ register = false }) {
           <button type="button" disabled={pending || resendCooldown > 0} onClick={handleResend} className="min-h-11 w-full border border-line px-4 text-xs disabled:cursor-not-allowed disabled:text-muted">
             {resendCooldown > 0 ? `Resend code in ${resendCooldown}s` : "Resend code"}
           </button>
-          <button type="button" onClick={() => { setVerification(null); setOtpCode(""); setError(""); }} className="w-full py-2 text-xs text-muted underline underline-offset-4">
+          <button type="button" onClick={() => {
+            setVerification(null);
+            setOtpCode("");
+            setEmail("");
+            setError("");
+          }} className="w-full py-2 text-xs text-muted underline underline-offset-4">
             Back to sign in
           </button>
         </form>
@@ -180,7 +156,7 @@ export function AuthForm({ register = false }) {
         )}
         <label className="block text-xs font-medium">
           Email
-          <input className="mt-2 min-h-12 w-full border border-line px-4 text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink" name="email" type="email" required maxLength={254} autoComplete="email" defaultValue={isAdminPortal ? "admin@gmail.com" : ""} />
+          <input className="mt-2 min-h-12 w-full border border-line px-4 text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink" name="email" type="email" required maxLength={254} autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} />
         </label>
         <label className="block text-xs font-medium">
           Password
@@ -195,7 +171,7 @@ export function AuthForm({ register = false }) {
         {error && <p className="text-sm text-red-700" role="alert">{error}</p>}
         {status === "error" && <p className="text-sm text-red-700" role="alert">Account security could not initialize. Refresh and try again.</p>}
         <button disabled={pending || status !== "ready"} className="min-h-12 w-full bg-ink px-5 text-xs font-semibold text-white transition-opacity hover:opacity-85 disabled:cursor-not-allowed disabled:opacity-50">
-          {pending ? "Please wait…" : register ? "Create account" : isAdminPortal ? "Sign in to Dashboard" : "Sign in"}
+          {pending ? "Please wait…" : register ? "Create account" : "Sign in"}
         </button>
       </form>
       )}
@@ -205,26 +181,6 @@ export function AuthForm({ register = false }) {
           {register ? "Sign in" : "Create an account"}
         </Link>
       </p>
-      {!register && !isAdminPortal && (
-        <div className="mt-6 border-t border-line pt-4 text-center">
-          <Link
-            href="/login?next=/admin"
-            className="inline-flex items-center gap-1.5 text-xs text-muted hover:text-ink transition-colors"
-          >
-            <span>Are you a store administrator? Sign in to Admin Portal →</span>
-          </Link>
-        </div>
-      )}
-      {!register && isAdminPortal && (
-        <div className="mt-6 border-t border-line pt-4 text-center">
-          <Link
-            href="/login"
-            className="inline-flex items-center gap-1.5 text-xs text-muted hover:text-ink transition-colors"
-          >
-            <span>← Back to Customer Sign in</span>
-          </Link>
-        </div>
-      )}
       {!register && <p className="mt-3 text-center text-[11px] text-muted">Customers verify sign-in by email. Admins and managers use this same form without OTP.</p>}
     </section>
   );

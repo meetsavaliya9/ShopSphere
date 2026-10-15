@@ -156,6 +156,16 @@ describe("Native NestJS authentication", () => {
       .set("Cookie", sessionCookie)
       .expect(200)
       .expect({ data: verification.body.data.user });
+    await request(app.getHttpServer())
+      .post("/api/v1/auth/logout")
+      .set(csrfHeaders(sessionCookie))
+      .send({})
+      .expect(200)
+      .expect({ data: { loggedOut: true, csrfToken } });
+    await request(app.getHttpServer())
+      .get("/api/v1/auth/me")
+      .set("Cookie", sessionCookie)
+      .expect(401);
 
     await request(app.getHttpServer())
       .post("/api/v1/auth/verify-otp")
@@ -243,7 +253,14 @@ describe("Native NestJS authentication", () => {
       expect(response.body.data.user.role).toBe(role);
       const sessionCookie = cookiePair(response, "shopsphere_session");
       expect(sessionCookie).toMatch(/^shopsphere_session=.{32,}$/);
-      if (role === "ADMIN") adminSessionCookie = sessionCookie;
+      if (role === "ADMIN") {
+        adminSessionCookie = sessionCookie;
+        await request(app.getHttpServer())
+          .get("/api/v1/auth/me")
+          .set("Cookie", sessionCookie)
+          .expect(200)
+          .expect({ data: response.body.data.user });
+      }
       if (role === "MANAGER") {
         const manager = prisma.getUsers().find((user) => user.email === "manager@example.com");
         const session = prisma.getSessions().find((entry) => entry.userId === manager.id);
@@ -285,6 +302,40 @@ describe("Native NestJS authentication", () => {
     await expect(auth.getSessionUser(result.token)).resolves.toMatchObject({
       role: "INVENTORY_MANAGER"
     });
+  });
+
+  it("logs out a Manager session and rejects subsequent profile access", async () => {
+    await prisma.user.create({
+      data: {
+        email: "manager-logout@example.com",
+        name: "Manager Logout",
+        passwordHash: await bcrypt.hash(PASSWORD, 12),
+        role: "MANAGER",
+        emailVerifiedAt: new Date()
+      }
+    });
+    const login = await request(app.getHttpServer())
+      .post("/api/v1/auth/login")
+      .set(csrfHeaders())
+      .send({ email: "manager-logout@example.com", password: PASSWORD })
+      .expect(200);
+    const sessionCookie = cookiePair(login, "shopsphere_session");
+
+    await request(app.getHttpServer())
+      .get("/api/v1/auth/me")
+      .set("Cookie", sessionCookie)
+      .expect(200)
+      .expect({ data: login.body.data.user });
+    await request(app.getHttpServer())
+      .post("/api/v1/auth/logout")
+      .set(csrfHeaders(sessionCookie))
+      .send({})
+      .expect(200)
+      .expect({ data: { loggedOut: true, csrfToken } });
+    await request(app.getHttpServer())
+      .get("/api/v1/auth/me")
+      .set("Cookie", sessionCookie)
+      .expect(401);
   });
 
   it("rejects invalid credentials and unauthenticated profile access", async () => {

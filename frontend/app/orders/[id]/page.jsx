@@ -1,4 +1,5 @@
 import OrdersContent from "../../../components/orders-content";
+import { RoleGate } from "../../../components/role-gate";
 import { requireServerUser } from "../../../lib/server/require-user";
 
 export const dynamic = "force-dynamic";
@@ -10,5 +11,5 @@ export default async function OrderDetailPage({ params }) {
     permissions: ["VIEW_ORDER_DETAILS"],
     nextPath: `/orders/${encodeURIComponent(id)}`
   });
-  return <OrdersContent orderId={id} />;
+  return <RoleGate roles={["CUSTOMER"]}><OrdersContent orderId={id} /></RoleGate>;
 }

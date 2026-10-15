@@ -4,7 +4,9 @@ import { ArrowDown, ArrowRight } from "lucide-react";
 import { ProductCard } from "../components/product-card";
 import { ProductImage } from "../components/product-image";
 import { StoreError } from "../components/store-state";
+import { RoleGate } from "../components/role-gate";
 import { listProducts } from "../lib/api/catalog";
+import { requireServerUser } from "../lib/server/require-user";
 
 export const dynamic = "force-dynamic";
 
@@ -13,6 +15,7 @@ function imageUrl(id, width = 1100) {
 }
 
 export default async function HomePage() {
+  await requireServerUser({ nextPath: "/" });
   let result = null;
   let errorMessage = "";
   try {
@@ -23,6 +26,7 @@ export default async function HomePage() {
   const featuredProduct = result?.data?.find((product) => product.imageUrl);
 
   return (
+    <RoleGate roles={["CUSTOMER", "ADMIN", "MANAGER", "INVENTORY_MANAGER"]}>
     <>
       <section className="relative isolate min-h-[610px] overflow-hidden bg-[#e9e5df] sm:min-h-[690px] lg:min-h-[760px]">
         <Image
@@ -151,5 +155,6 @@ export default async function HomePage() {
         </div>
       </section>
     </>
+    </RoleGate>
   );
 }

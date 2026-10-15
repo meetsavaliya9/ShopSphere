@@ -27,13 +27,30 @@ export function AuthProvider({ children }) {
       setError("");
       return result;
     } catch (requestError) {
-      if (requestError?.status !== 401) throw requestError;
+      if (requestError?.status === 401) {
+        setUser(null);
+        setStatus("ready");
+        setError("");
+        return null;
+      }
       setUser(null);
-      setStatus("ready");
-      setError("");
-      return null;
+      setStatus("error");
+      setError(requestError.message || "The authentication service is unavailable.");
+      throw requestError;
     }
   }, []);
+
+  useEffect(() => {
+    function refreshOnHistoryRestore(event) {
+      if (!event.persisted) return;
+      setUser(null);
+      setStatus("loading");
+      setError("");
+      refreshUser().catch((refreshError) => setError(refreshError.message));
+    }
+    window.addEventListener("pageshow", refreshOnHistoryRestore);
+    return () => window.removeEventListener("pageshow", refreshOnHistoryRestore);
+  }, [refreshUser]);
 
   const ensureCsrfToken = useCallback(async () => {
     if (csrfToken) return csrfToken;
@@ -61,8 +78,8 @@ export function AuthProvider({ children }) {
         if (active) {
           setUser(null);
           setCsrfToken("");
-          setStatus("ready");
-          setError("");
+          setStatus("error");
+          setError("Authentication could not be initialized. Refresh and try again.");
         }
       }
     }
@@ -96,14 +113,16 @@ export function AuthProvider({ children }) {
         csrfToken: token,
       });
       if (!result.requiresEmailVerification) {
-        setUser(result.user);
+        const currentUser = await refreshUser();
+        if (!currentUser) {
+          throw new Error("Sign-in did not establish a valid session. Please try again.");
+        }
         setCsrfToken(result.csrfToken);
-        setStatus("ready");
-        setError("");
+        return { ...result, user: currentUser };
       }
       return result;
     },
-    [ensureCsrfToken],
+    [ensureCsrfToken, refreshUser],
   );
 
   const login = useCallback(
@@ -138,13 +157,14 @@ export function AuthProvider({ children }) {
         body: { challengeId, code },
         csrfToken: token,
       });
-      setUser(result.user);
+      const currentUser = await refreshUser();
+      if (!currentUser) {
+        throw new Error("Verification did not establish a valid session. Please try again.");
+      }
       if (result.csrfToken) setCsrfToken(result.csrfToken);
-      setStatus("ready");
-      setError("");
-      return result.user;
+      return currentUser;
     },
-    [ensureCsrfToken],
+    [ensureCsrfToken, refreshUser],
   );
 
   const resendOtp = useCallback(
@@ -168,6 +188,7 @@ export function AuthProvider({ children }) {
     });
     setUser(null);
     setCsrfToken(result.csrfToken);
+    window.location.replace("/login");
   }, [ensureCsrfToken]);
 
   const changePassword = useCallback(

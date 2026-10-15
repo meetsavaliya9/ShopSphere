@@ -10,7 +10,7 @@ ShopSphere's storefront and dashboards use the Next.js App Router, JavaScript/JS
 - Generate the Prisma client from `nest-api` with `npx prisma generate`.
 - Start both services from the project root with `npm run dev`. The launcher uses the configured NestJS `PORT` and sets the matching frontend `NEST_API_URL`.
 
-The defaults are Next.js at `http://127.0.0.1:3000` and NestJS at `http://127.0.0.1:3004`; `frontend/.env.local` contains the standalone frontend default. If starting Next.js directly, keep `NEST_API_URL` aligned with the NestJS bind address and port. No standalone `express-api` service is part of the runtime.
+The defaults are Next.js at `http://127.0.0.1:3000` and NestJS at `http://127.0.0.1:3004`; `frontend/.env.local` should use that API URL unless `nest-api/.env` overrides `PORT`. If starting Next.js directly, keep `NEST_API_URL` aligned with the NestJS bind address and port. No standalone `express-api` service is part of the runtime.
 
 For Vercel, set the server-side `NEST_API_URL` to the NestJS origin, or to that origin with `/api/v1`; the API client applies `/api/v1` exactly once. Do not use a `NEXT_PUBLIC_` variable for the backend URL.
 
