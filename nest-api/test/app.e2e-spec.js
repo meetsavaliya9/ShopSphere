@@ -67,6 +67,7 @@ describe("ShopSphere NestJS API", () => {
 
   it.each([
     ["admin overview", "get", "/api/v1/admin/overview"],
+    ["admin database inventory", "get", "/api/v1/admin/database-inventory"],
     ["admin customers", "get", "/api/v1/admin/customers"],
     ["admin coupons", "get", "/api/v1/admin/coupons"],
     ["admin reports", "get", "/api/v1/admin/reports"],

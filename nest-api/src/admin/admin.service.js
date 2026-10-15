@@ -184,6 +184,25 @@ class AdminService {
     this.prisma = prismaService.client;
   }
 
+  async databaseInventory() {
+    const databaseRows = await this.prisma.$queryRaw`SELECT DATABASE() AS databaseName`;
+    const databaseName = databaseRows[0]?.databaseName;
+    const tables = await this.prisma.$queryRaw`
+      SELECT TABLE_NAME AS tableName
+      FROM information_schema.tables
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_TYPE = 'BASE TABLE'
+      ORDER BY TABLE_NAME
+    `;
+    const inventory = await Promise.all(tables.map(async ({ tableName }) => {
+      const identifier = `\`${String(tableName).replace(/`/g, "``")}\``;
+      const rows = await this.prisma.$queryRawUnsafe(
+        `SELECT COUNT(*) AS rowCount FROM ${identifier}`
+      );
+      return { name: tableName, rowCount: String(rows[0].rowCount) };
+    }));
+    return { databaseName, tables: inventory };
+  }
+
   async customers() {
     const users = await this.prisma.user.findMany({
       where: { role: "CUSTOMER" },

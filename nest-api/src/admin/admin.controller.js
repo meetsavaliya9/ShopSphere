@@ -31,6 +31,10 @@ class AdminController {
     response.status(200).json({ data: await this.admin.reports(query) });
   }
 
+  async databaseInventory(response) {
+    response.status(200).json({ data: await this.admin.databaseInventory() });
+  }
+
   async customers(response) {
     response.status(200).json({ data: await this.admin.customers() });
   }
@@ -120,6 +124,7 @@ function route(method, decorator, path, guards, parameters) {
 
 route("overview", Get, "overview", [], [[Query, 0], [Res, 1]]);
 route("reports", Get, "reports", [], [[Query, 0], [Res, 1]]);
+route("databaseInventory", Get, "database-inventory", [], [[Res, 0]]);
 route("customers", Get, "customers", [], [[Res, 0]]);
 route("customerDetails", Get, "customers/:id", [], [[Param, 0], [Res, 1]]);
 route("updateCustomerStatus", Patch, "customers/:id/status", [CsrfGuard], [[Param, 0], [Body, 1], [Res, 2]]);

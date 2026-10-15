@@ -1,4 +1,4 @@
-ALTER TABLE `product`
+ALTER TABLE `Product`
     ADD COLUMN `stockQuantity` INTEGER NULL,
     ADD COLUMN `lowStockThreshold` INTEGER NULL;
 
@@ -20,9 +20,9 @@ CREATE TABLE `inventorystockhistory` (
     INDEX `InventoryStockHistory_userId_createdAt_idx`(`userId`, `createdAt`),
     PRIMARY KEY (`id`),
     CONSTRAINT `InventoryStockHistory_productId_fkey`
-        FOREIGN KEY (`productId`) REFERENCES `product`(`id`)
+        FOREIGN KEY (`productId`) REFERENCES `Product`(`id`)
         ON DELETE SET NULL ON UPDATE CASCADE,
-    CONSTRAINT `InventoryStockHistory_userId_fkey`
-        FOREIGN KEY (`userId`) REFERENCES `user`(`id`)
+   CONSTRAINT `InventoryStockHistory_userId_fkey`
+        FOREIGN KEY (`userId`) REFERENCES `User`(`id`)
         ON DELETE SET NULL ON UPDATE CASCADE
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;

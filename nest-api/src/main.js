@@ -11,7 +11,7 @@ const {
 const { AllExceptionsFilter } = require("./common/filters/all-exceptions.filter");
 
 const DEFAULT_HOST = "0.0.0.0";
-const DEFAULT_PORT = 3004;
+const DEFAULT_PORT = 3005;
 let bootstrapPromise;
 
 class NestStartupError extends Error {

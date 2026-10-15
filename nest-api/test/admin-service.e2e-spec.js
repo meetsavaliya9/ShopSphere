@@ -2,6 +2,29 @@ const { BadRequestException } = require("@nestjs/common");
 const { AdminService, couponInput, rangeStart, salesTimeline } = require("../src/admin/admin.service");
 
 describe("NestJS administrator data services", () => {
+  it("returns only database table names and exact row counts for diagnostics", async () => {
+    const prisma = {
+      async $queryRaw(strings) {
+        const query = strings.join("");
+        if (query.includes("SELECT DATABASE()")) return [{ databaseName: "railway" }];
+        return [{ tableName: "product" }, { tableName: "category" }];
+      },
+      async $queryRawUnsafe(query) {
+        expect(query).toMatch(/^SELECT COUNT\(\*\) AS rowCount FROM `(?:product|category)`$/);
+        return [{ rowCount: query.includes("product") ? 5n : 4n }];
+      }
+    };
+    const service = new AdminService({ client: prisma });
+
+    await expect(service.databaseInventory()).resolves.toEqual({
+      databaseName: "railway",
+      tables: [
+        { name: "product", rowCount: "5" },
+        { name: "category", rowCount: "4" }
+      ]
+    });
+  });
+
   it("returns customer order totals only for captured payments", async () => {
     const service = new AdminService({
       client: {

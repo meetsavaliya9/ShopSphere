@@ -1,7 +1,5 @@
 -- AlterTable
-ALTER TABLE `product` ADD COLUMN `managerId` INTEGER NULL;
-
--- CreateTable
+ALTER TABLE `Product` ADD COLUMN `managerId` INTEGER NULL;-- CreateTable
 CREATE TABLE `User` (
     `id` INTEGER NOT NULL AUTO_INCREMENT,
     `email` VARCHAR(254) NOT NULL,

@@ -1,4 +1,4 @@
-ALTER TABLE `user`
+ALTER TABLE `User`
     MODIFY `role` ENUM('ADMIN', 'MANAGER', 'CUSTOMER', 'INVENTORY_MANAGER') NOT NULL DEFAULT 'CUSTOMER';
 
 CREATE TABLE `inventorymanagerpermission` (
@@ -8,6 +8,6 @@ CREATE TABLE `inventorymanagerpermission` (
     INDEX `InventoryManagerPermission_permission_idx`(`permission`),
     PRIMARY KEY (`userId`, `permission`),
     CONSTRAINT `InventoryManagerPermission_userId_fkey`
-        FOREIGN KEY (`userId`) REFERENCES `user`(`id`)
+        FOREIGN KEY (`userId`) REFERENCES `User`(`id`)
         ON DELETE CASCADE ON UPDATE CASCADE
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;

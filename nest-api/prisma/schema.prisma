@@ -41,6 +41,7 @@ model product {
   @@index([name], map: "Product_name_idx")
   @@index([category, price], map: "Product_category_price_idx")
   @@index([managerId], map: "Product_managerId_idx")
+  @@map("Product")
 }
 
 model cart {
@@ -174,6 +175,7 @@ model user {
   wishlistitem          wishlistitem[]
 
   @@index([role], map: "User_role_idx")
+  @@map("User")
 }
 
 model inventorymanagerpermission {
