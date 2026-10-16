@@ -341,7 +341,7 @@ function ManagerStockEditor({ product, saving, canManageAlerts, onSave }) {
 }
 
 function ManagerProducts({ permissions, inventoryOnly = false }) {
-  const { csrfToken } = useAuth();
+  const { user, csrfToken } = useAuth();
   const [products, setProducts] = useState([]);
   const [status, setStatus] = useState("loading");
   const [error, setError] = useState("");
@@ -561,51 +561,64 @@ function ManagerProducts({ permissions, inventoryOnly = false }) {
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
-              {products.map((product) => (
-                <tr key={product.id} className="text-zinc-700 dark:text-zinc-300">
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-3">
-                      {product.imageUrl && <img src={product.imageUrl} alt="" className="h-10 w-10 rounded-md object-cover" />}
-                      <div>
-                        <p className="font-medium">{product.name}</p>
-                        {permissions.includes("VIEW_PRODUCT_DETAILS") && product.description && <p className="mt-1 max-w-sm text-zinc-500">{product.description}</p>}
-                      </div>
-                    </div>
-                  </td>
-                  {canViewProducts && <td className="px-4 py-3">{product.category}</td>}
-                  {canViewProducts && <td className="px-4 py-3">{formatMoney(product.price)}</td>}
-                  {canViewStock && <td className="px-4 py-3"><Badge variant={product.inStock ? "success" : "destructive"}>{product.inStock ? "In stock" : "Out of stock"}</Badge></td>}
-                  {canViewStock && <td className="px-4 py-3">{Number.isInteger(product.stockQuantity) ? product.stockQuantity : <span className="text-amber-700">Count needed</span>}</td>}
-                  {canViewStock && canManageAlerts && <td className="px-4 py-3">{Number.isInteger(product.lowStockThreshold) ? product.lowStockThreshold : "Not set"}</td>}
-                  <td className="px-4 py-3">{product.updatedAt ? new Date(product.updatedAt).toLocaleDateString() : "—"}</td>
-                  {(canManageProducts || permissions.includes("VIEW_PRODUCT_DETAILS")) && (
-                    <td className="whitespace-nowrap px-4 py-3">
-                      <div className="flex items-center gap-2">
-                        {canUpdateInventory && <button
-                          type="button"
-                          title={`Update stock for ${product.name}`}
-                          aria-label={`Update stock for ${product.name}`}
-                          disabled={saving}
-                          onClick={() => setSelectedStock(product)}
-                          className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-zinc-300 px-2.5 py-2 text-[11px] font-semibold hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:hover:bg-zinc-900"
-                        ><Boxes size={14} /><span>Stock</span></button>}
-                        {(canEdit || canDelete || permissions.includes("VIEW_PRODUCT_DETAILS")) && <details className="relative">
-                          <summary
-                            aria-label={`Actions for ${product.name}`}
-                            title={`Actions for ${product.name}`}
-                            className="flex cursor-pointer list-none items-center gap-1.5 rounded-md border border-zinc-300 px-2.5 py-2 text-[11px] font-semibold hover:bg-zinc-50 focus-visible:outline-2 focus-visible:outline-offset-2 dark:border-zinc-700 dark:hover:bg-zinc-900 [&::-webkit-details-marker]:hidden"
-                          ><Ellipsis size={15} /><span>Actions</span></summary>
-                          <div className="absolute right-0 z-20 mt-1 min-w-40 rounded-lg border border-zinc-200 bg-white p-1.5 shadow-lg dark:border-zinc-700 dark:bg-zinc-950">
-                            {permissions.includes("VIEW_PRODUCT_DETAILS") && <button type="button" onClick={(event) => { event.currentTarget.closest("details").open = false; viewProductDetails(product); }} className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-xs hover:bg-zinc-100 dark:hover:bg-zinc-900"><Eye size={14} />View details</button>}
-                            {canEdit && <button type="button" disabled={saving} onClick={(event) => { event.currentTarget.closest("details").open = false; setSelectedStock(null); setCreating(false); setEditing(product); }} className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-xs hover:bg-zinc-100 disabled:opacity-50 dark:hover:bg-zinc-900"><Pencil size={14} />Edit product</button>}
-                            {canDelete && <button type="button" disabled={saving} onClick={(event) => { event.currentTarget.closest("details").open = false; deleteProduct(product); }} className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-xs font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-50 dark:hover:bg-rose-950/40"><Trash2 size={14} />Delete product</button>}
+              {products.map((product) => {
+                const isOwner = Boolean(user?.id && (product.managerId === user.id || product.manager?.id === user.id));
+                const canEditThisProduct = canEdit && isOwner;
+                const canDeleteThisProduct = canDelete && isOwner;
+                const canShowActions = permissions.includes("VIEW_PRODUCT_DETAILS") || canEditThisProduct || canDeleteThisProduct;
+                return (
+                  <tr key={product.id} className="text-zinc-700 dark:text-zinc-300">
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-3">
+                        {product.imageUrl && <img src={product.imageUrl} alt="" className="h-10 w-10 rounded-md object-cover" />}
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <p className="font-medium">{product.name}</p>
+                            {!product.managerId && (
+                              <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] font-medium text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+                                Store
+                              </span>
+                            )}
                           </div>
-                        </details>}
+                          {permissions.includes("VIEW_PRODUCT_DETAILS") && product.description && <p className="mt-1 max-w-sm text-zinc-500">{product.description}</p>}
+                        </div>
                       </div>
                     </td>
-                  )}
-                </tr>
-              ))}
+                    {canViewProducts && <td className="px-4 py-3">{product.category}</td>}
+                    {canViewProducts && <td className="px-4 py-3">{formatMoney(product.price)}</td>}
+                    {canViewStock && <td className="px-4 py-3"><Badge variant={product.inStock ? "success" : "destructive"}>{product.inStock ? "In stock" : "Out of stock"}</Badge></td>}
+                    {canViewStock && <td className="px-4 py-3">{Number.isInteger(product.stockQuantity) ? product.stockQuantity : <span className="text-amber-700">Count needed</span>}</td>}
+                    {canViewStock && canManageAlerts && <td className="px-4 py-3">{Number.isInteger(product.lowStockThreshold) ? product.lowStockThreshold : "Not set"}</td>}
+                    <td className="px-4 py-3">{product.updatedAt ? new Date(product.updatedAt).toLocaleDateString() : "—"}</td>
+                    {(canManageProducts || permissions.includes("VIEW_PRODUCT_DETAILS")) && (
+                      <td className="whitespace-nowrap px-4 py-3">
+                        <div className="flex items-center gap-2">
+                          {canUpdateInventory && <button
+                            type="button"
+                            title={`Update stock for ${product.name}`}
+                            aria-label={`Update stock for ${product.name}`}
+                            disabled={saving}
+                            onClick={() => setSelectedStock(product)}
+                            className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-zinc-300 px-2.5 py-2 text-[11px] font-semibold hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:hover:bg-zinc-900"
+                          ><Boxes size={14} /><span>Stock</span></button>}
+                          {canShowActions && <details className="relative">
+                            <summary
+                              aria-label={`Actions for ${product.name}`}
+                              title={`Actions for ${product.name}`}
+                              className="flex cursor-pointer list-none items-center gap-1.5 rounded-md border border-zinc-300 px-2.5 py-2 text-[11px] font-semibold hover:bg-zinc-50 focus-visible:outline-2 focus-visible:outline-offset-2 dark:border-zinc-700 dark:hover:bg-zinc-900 [&::-webkit-details-marker]:hidden"
+                            ><Ellipsis size={15} /><span>Actions</span></summary>
+                            <div className="absolute right-0 z-20 mt-1 min-w-40 rounded-lg border border-zinc-200 bg-white p-1.5 shadow-lg dark:border-zinc-700 dark:bg-zinc-950">
+                              {permissions.includes("VIEW_PRODUCT_DETAILS") && <button type="button" onClick={(event) => { event.currentTarget.closest("details").open = false; viewProductDetails(product); }} className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-xs hover:bg-zinc-100 dark:hover:bg-zinc-900"><Eye size={14} />View details</button>}
+                              {canEditThisProduct && <button type="button" disabled={saving} onClick={(event) => { event.currentTarget.closest("details").open = false; setSelectedStock(null); setCreating(false); setEditing(product); }} className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-xs hover:bg-zinc-100 disabled:opacity-50 dark:hover:bg-zinc-900"><Pencil size={14} />Edit product</button>}
+                              {canDeleteThisProduct && <button type="button" disabled={saving} onClick={(event) => { event.currentTarget.closest("details").open = false; deleteProduct(product); }} className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-xs font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-50 dark:hover:bg-rose-950/40"><Trash2 size={14} />Delete product</button>}
+                            </div>
+                          </details>}
+                        </div>
+                      </td>
+                    )}
+                  </tr>
+                );
+              })}
               {products.length === 0 && <tr><td colSpan={2 + Number(canViewProducts) * 2 + Number(canViewStock) * 2 + Number(canViewStock && canManageAlerts) + Number(canManageProducts || permissions.includes("VIEW_PRODUCT_DETAILS"))} className="px-4 py-10 text-center text-zinc-500">No products match these filters.</td></tr>}
             </tbody>
           </table>
