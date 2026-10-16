@@ -15,7 +15,7 @@ export default async function ProductsPage({ searchParams }) {
     sortBy: params.sortBy || "",
     order: params.order || "asc",
     page: Number(params.page || 1),
-    limit: Number(params.limit || 10)
+    limit: Number(params.limit || 12)
   };
 
   try {

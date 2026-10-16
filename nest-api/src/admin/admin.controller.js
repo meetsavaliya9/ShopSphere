@@ -35,8 +35,8 @@ class AdminController {
     response.status(200).json({ data: await this.admin.databaseInventory() });
   }
 
-  async customers(response) {
-    response.status(200).json({ data: await this.admin.customers() });
+  async customers(query, response) {
+    response.status(200).json(await this.admin.customers(query));
   }
 
   async customerDetails(id, response) {

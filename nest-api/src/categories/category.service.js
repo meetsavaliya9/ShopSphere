@@ -31,8 +31,12 @@ class CategoryService {
     this.prisma = prismaService.client;
   }
 
-  async list() {
-    const [savedCategories, products] = await Promise.all([
+  async list(query = {}) {
+    const page = this.parseInteger(query.page, 1, 1, 1_000_000, "page");
+    const limit = this.parseInteger(query.limit, 10, 1, 100, "limit");
+    const skip = (page - 1) * limit;
+
+    const [savedCategories, products, total] = await Promise.all([
       this.prisma.category.findMany({ orderBy: { name: "asc" } }),
       this.prisma.product.findMany({
         select: {
@@ -40,7 +44,8 @@ class CategoryService {
           price: true,
           inStock: true
         }
-      })
+      }),
+      this.prisma.category.count()
     ]);
 
     const counts = new Map();
@@ -83,9 +88,29 @@ class CategoryService {
       });
     }
 
-    return [...categories.values()].sort((left, right) =>
+    const allCategories = [...categories.values()].sort((left, right) =>
       left.name.localeCompare(right.name)
     );
+    const paginatedCategories = allCategories.slice(skip, skip + limit);
+
+    return {
+      data: paginatedCategories,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit)
+      }
+    };
+  }
+
+  parseInteger(value, fallback, minimum, maximum, field) {
+    if (value === undefined || value === "") return fallback;
+    const parsed = Number(value);
+    if (!Number.isSafeInteger(parsed) || parsed < minimum || parsed > maximum) {
+      throw new BadRequestException(`${field} must be between ${minimum} and ${maximum}.`);
+    }
+    return parsed;
   }
 
   async create(input) {

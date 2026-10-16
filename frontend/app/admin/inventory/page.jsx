@@ -24,6 +24,7 @@ import { Badge } from "../../../components/admin/badge";
 import { Modal } from "../../../components/admin/modal";
 import { StatCard } from "../../../components/admin/stat-card";
 import { ProductImage } from "../../../components/product-image";
+import { getPaginationItems, getPaginationRange } from "../../../lib/pagination";
 
 export default function AdminInventoryPage() {
   const { csrfToken } = useAuth();
@@ -53,7 +54,13 @@ export default function AdminInventoryPage() {
 
   const [page, setPage] = useState(1);
   const [pagination, setPagination] = useState(null);
-  const pageSize = 12;
+  const pageSize = 10;
+
+  const total = pagination?.total ?? 0;
+  const totalPages = pagination?.totalPages ?? 1;
+  const paginationInfo = getPaginationRange(page, pageSize, total);
+  const { startItem, endItem, isFirstPage, isLastPage } = paginationInfo;
+  const paginationItems = getPaginationItems(page, totalPages);
 
   const loadData = useCallback(async (targetPage = page) => {
     setStatus("loading");
@@ -504,34 +511,72 @@ export default function AdminInventoryPage() {
           </table>
         </div>
 
-        {/* Pagination */}
-        <div className="flex items-center justify-between border-t border-zinc-100 px-4 py-3 dark:border-zinc-850 text-xs text-zinc-500">
-          <span>
-            Showing {products.length ? (page - 1) * pageSize + 1 : 0} to{" "}
-            {Math.min((page - 1) * pageSize + products.length, pagination?.total || 0)} of {pagination?.total ?? 0} items
-          </span>
-
-          <div className="flex items-center gap-1">
-            <button
-              type="button"
-              disabled={page <= 1}
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
-              className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-zinc-200 text-zinc-600 hover:bg-zinc-100 disabled:opacity-40 dark:border-zinc-800 dark:text-zinc-300 transition-colors"
-            >
-              ←
-            </button>
-            <span className="px-2 text-xs font-semibold text-zinc-700 dark:text-zinc-300">
-              Page {page} of {Math.max(1, pagination?.totalPages || 0)}
-            </span>
-            <button
-              type="button"
-              disabled={page >= Math.max(1, pagination?.totalPages || 0) || status === "loading"}
-              onClick={() => setPage((current) => Math.min(pagination?.totalPages || 1, current + 1))}
-              className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-zinc-200 text-zinc-600 hover:bg-zinc-100 disabled:opacity-40 dark:border-zinc-800 dark:text-zinc-300 transition-colors"
-            >
-              →
-            </button>
-          </div>
+        {/* Pagination Controls */}
+        <div className="mt-6 flex flex-col items-center sm:flex-row sm:items-start w-full gap-2 sm:gap-6 border-t border-zinc-200 pt-4 dark:border-zinc-800">
+          {totalPages > 1 ? (
+            <>
+              <p className="text-xs text-muted text-center sm:text-left">
+                Showing {startItem}–{endItem} of {total} products
+              </p>
+              <nav className="mx-auto flex flex-wrap items-center justify-center gap-1 sm:gap-6" aria-label="Product pagination">
+                <button
+                  type="button"
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  disabled={isFirstPage || status === "loading"}
+                  aria-label="Previous page"
+                  className="inline-flex h-9 w-auto items-center justify-center px-3.5 py-1.5 text-xs font-bold uppercase tracking-wider transition-colors disabled:cursor-not-allowed disabled:text-[#b0b0b0] enabled:text-ink enabled:hover:text-ink/70 dark:border-zinc-800"
+                >
+                  Previous
+                </button>
+                <div className="flex items-center gap-1 sm:gap-6">
+                  {paginationItems.map((item, idx) => {
+                    if (item === "...") {
+                      return (
+                        <span
+                          key={`ellipsis-${idx}`}
+                          className="inline-flex h-9 w-6 items-center justify-center text-xs font-bold text-muted select-none sm:h-9 sm:w-8"
+                          aria-hidden="true"
+                        >
+                          …
+                        </span>
+                      );
+                    }
+                    const isCurrent = item === page;
+                    return (
+                      <button
+                        key={`page-${item}`}
+                        type="button"
+                        onClick={() => setPage(item)}
+                        disabled={isCurrent}
+                        aria-current={isCurrent ? "page" : undefined}
+                        aria-label={isCurrent ? `Page ${item}, current page` : `Go to page ${item}`}
+                        className={`inline-flex h-9 w-9 items-center justify-center rounded-full text-xs font-semibold transition-all ${
+                          isCurrent
+                            ? "bg-ink text-white shadow-xs"
+                            : "text-ink hover:bg-surface"
+                        }`}
+                      >
+                        {item}
+                      </button>
+                    );
+                  })}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
+                  disabled={isLastPage || status === "loading"}
+                  aria-label="Next page"
+                  className="inline-flex h-9 w-auto items-center justify-center px-3.5 py-1.5 text-xs font-bold uppercase tracking-wider transition-colors disabled:cursor-not-allowed disabled:text-[#b0b0b0] enabled:text-ink enabled:hover:text-ink/70 dark:border-zinc-800"
+                >
+                  Next
+                </button>
+              </nav>
+            </>
+          ) : pagination?.total && pagination.total > 0 ? (
+            <p className="text-xs text-muted text-center">
+              Showing {startItem}–{endItem} of {total} products
+            </p>
+          ) : null}
         </div>
       </div>
 

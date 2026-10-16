@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   CheckCircle2,
   Clock,
@@ -18,6 +18,7 @@ import { authRequest } from "../../../lib/api/auth";
 import { useAuth } from "../../../components/auth-provider";
 import { Badge } from "../../../components/admin/badge";
 import { Modal } from "../../../components/admin/modal";
+import { getPaginationItems, getPaginationRange } from "../../../lib/pagination";
 
 export default function AdminOrdersPage() {
   const { csrfToken } = useAuth();
@@ -32,6 +33,36 @@ export default function AdminOrdersPage() {
   const [detailsModalOpen, setDetailsModalOpen] = useState(false);
   const [updatingStatus, setUpdatingStatus] = useState(false);
   const [newStatus, setNewStatus] = useState("");
+
+  // Pagination
+  const [page, setPage] = useState(1);
+  const pageSize = 10;
+  const [totalPages, setTotalPages] = useState(0);
+
+  const filteredOrders = useMemo(() => {
+    return orders.filter((o) => {
+      const matchesStatus = statusFilter === "ALL" || o.status === statusFilter;
+      const query = search.trim().toLowerCase();
+      const matchesSearch =
+        !query ||
+        String(o.id).includes(query) ||
+        (o.user?.name || "").toLowerCase().includes(query) ||
+        (o.user?.email || "").toLowerCase().includes(query);
+      return matchesStatus && matchesSearch;
+    });
+  }, [orders, statusFilter, search]);
+
+  const paginatedOrders = useMemo(() => {
+    const total = filteredOrders.length;
+    const pages = Math.max(1, Math.ceil(total / pageSize));
+    setTotalPages(pages);
+    const start = (page - 1) * pageSize;
+    return filteredOrders.slice(start, start + pageSize);
+  }, [filteredOrders, page, pageSize]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [statusFilter, search]);
 
   const loadOrders = useCallback(async () => {
     setStatus("loading");
@@ -168,8 +199,8 @@ export default function AdminOrdersPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-100 dark:divide-zinc-850">
-              {orders.length > 0 ? (
-                orders.map((o) => (
+              {paginatedOrders.length > 0 ? (
+                paginatedOrders.map((o) => (
                   <tr key={o.id} className="hover:bg-zinc-50/50 dark:hover:bg-zinc-900/40 transition-colors">
                     <td className="py-3 px-4 font-mono font-bold text-zinc-900 dark:text-zinc-100">
                       #{o.id}
@@ -231,6 +262,59 @@ export default function AdminOrdersPage() {
             </tbody>
           </table>
         </div>
+
+        {/* Pagination Controls */}
+        {totalPages > 1 ? (
+          <div className="mt-6 flex flex-col items-center sm:flex-row sm:items-start w-full gap-2 sm:gap-6 border-t border-zinc-200 pt-4 dark:border-zinc-800">
+            <p className="text-xs text-muted text-center sm:text-left">
+              Showing {((page - 1) * pageSize + 1).toString()}–{Math.min(page * pageSize, filteredOrders.length)} of {filteredOrders.length} orders
+            </p>
+            <nav className="mx-auto flex flex-wrap items-center justify-center gap-1 sm:gap-6" aria-label="Order pagination">
+              <button
+                type="button"
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                disabled={page <= 1}
+                aria-label="Previous page"
+                className="inline-flex h-9 w-auto items-center justify-center px-3.5 py-1.5 text-xs font-bold uppercase tracking-wider transition-colors disabled:cursor-not-allowed disabled:text-[#b0b0b0] enabled:text-ink enabled:hover:text-ink/70 dark:border-zinc-800"
+              >
+                Previous
+              </button>
+              <div className="flex items-center gap-1 sm:gap-6">
+                {Array.from({ length: totalPages }, (_, i) => i + 1).map((item) => {
+                  const isCurrent = item === page;
+                  return (
+                    <button
+                      key={`page-${item}`}
+                      type="button"
+                      onClick={() => setPage(item)}
+                      disabled={isCurrent}
+                      aria-current={isCurrent ? "page" : undefined}
+                      aria-label={isCurrent ? `Page ${item}, current page` : `Go to page ${item}`}
+                      className={`inline-flex h-9 w-9 items-center justify-center rounded-full text-xs font-semibold transition-all ${
+                        isCurrent ? "bg-ink text-white shadow-xs" : "text-ink hover:bg-surface"
+                      }`}
+                    >
+                      {item}
+                    </button>
+                  );
+                })}
+              </div>
+              <button
+                type="button"
+                onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
+                disabled={page >= totalPages}
+                aria-label="Next page"
+                className="inline-flex h-9 w-auto items-center justify-center px-3.5 py-1.5 text-xs font-bold uppercase tracking-wider transition-colors disabled:cursor-not-allowed disabled:text-[#b0b0b0] enabled:text-ink enabled:hover:text-ink/70 dark:border-zinc-800"
+              >
+                Next
+              </button>
+            </nav>
+          </div>
+        ) : filteredOrders.length > 0 ? (
+          <p className="mt-6 text-center text-xs text-muted">
+            Showing 1–{filteredOrders.length} of {filteredOrders.length} orders
+          </p>
+        ) : null}
       </div>
 
       {/* Order Details Modal */}

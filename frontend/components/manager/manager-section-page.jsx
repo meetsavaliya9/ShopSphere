@@ -25,6 +25,8 @@ import { useAuth } from "../auth-provider";
 import { StatCard } from "../admin/stat-card";
 import { Badge } from "../admin/badge";
 import { useManagerPermissions } from "./manager-panel-layout";
+import AdminPagination from "../admin/admin-pagination";
+import { PAGE_SIZE } from "../admin/admin-pagination";
 
 const EMPTY_PRODUCT = { name: "", category: "", price: "", description: "" };
 
@@ -388,7 +390,7 @@ function ManagerProducts({ permissions, inventoryOnly = false }) {
     setError("");
     setAccessDenied(false);
     try {
-      const query = new URLSearchParams({ page: String(targetPage), limit: "12" });
+      const query = new URLSearchParams({ page: String(targetPage), limit: String(PAGE_SIZE) });
       if (search.trim()) query.set("search", search.trim());
       if (categoryFilter.trim()) query.set("category", categoryFilter.trim());
       if (stockFilter !== "ALL") query.set("inStock", stockFilter === "IN_STOCK" ? "true" : "false");
@@ -421,6 +423,10 @@ function ManagerProducts({ permissions, inventoryOnly = false }) {
     const timer = window.setTimeout(() => loadProducts(page), 250);
     return () => window.clearTimeout(timer);
   }, [canAccess, canViewProducts, canViewStock, loadProducts, page]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [search, categoryFilter, stockFilter, sortBy, sortOrder]);
 
   async function saveProduct(input) {
     if (savingLock.current) return;
@@ -622,13 +628,11 @@ function ManagerProducts({ permissions, inventoryOnly = false }) {
               {products.length === 0 && <tr><td colSpan={2 + Number(canViewProducts) * 2 + Number(canViewStock) * 2 + Number(canViewStock && canManageAlerts) + Number(canManageProducts || permissions.includes("VIEW_PRODUCT_DETAILS"))} className="px-4 py-10 text-center text-zinc-500">No products match these filters.</td></tr>}
             </tbody>
           </table>
-          {pagination && pagination.totalPages > 1 && <nav className="flex items-center justify-between border-t border-zinc-200 px-4 py-3 text-xs dark:border-zinc-800" aria-label="Product pages">
-            <p>Page {pagination.page} of {pagination.totalPages} · {pagination.total} products</p>
-            <div className="flex gap-2">
-              <button type="button" disabled={page <= 1 || status === "loading"} onClick={() => loadProducts(page - 1)} className="rounded-lg border border-zinc-200 px-3 py-2 disabled:opacity-50 dark:border-zinc-800">Previous</button>
-              <button type="button" disabled={page >= pagination.totalPages || status === "loading"} onClick={() => loadProducts(page + 1)} className="rounded-lg border border-zinc-200 px-3 py-2 disabled:opacity-50 dark:border-zinc-800">Next</button>
-            </div>
-          </nav>}
+          <AdminPagination
+            currentPage={page}
+            totalItems={pagination?.total || 0}
+            onPageChange={loadProducts}
+          />
         </div>
       )}
     </section>
@@ -642,23 +646,28 @@ function ManagerCategories({ permissions }) {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [saving, setSaving] = useState(false);
+  const [page, setPage] = useState(1);
+  const [pagination, setPagination] = useState(null);
   const canManage = permissions.includes("MANAGE_CATEGORIES");
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (targetPage = page) => {
     setStatus("loading");
     setError("");
     try {
-      const result = await authRequest("manager/categories");
-      if (!Array.isArray(result)) {
+      const query = new URLSearchParams({ page: String(targetPage), limit: String(PAGE_SIZE) });
+      const result = await authRequest(`manager/categories?${query.toString()}`, { includeEnvelope: true });
+      if (!Array.isArray(result?.data)) {
         throw new Error("The categories response was invalid.");
       }
-      setCategories(result);
+      setCategories(result.data);
+      setPagination(result.pagination || null);
+      setPage(targetPage);
       setStatus("ready");
     } catch (requestError) {
       setError(requestError.message || "Categories could not be loaded.");
       setStatus("error");
     }
-  }, []);
+  }, [page]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -749,6 +758,11 @@ function ManagerCategories({ permissions }) {
             {categories.length === 0 && <tr><td colSpan={canManage ? 4 : 3} className="px-4 py-8 text-center text-zinc-500">No categories are used by your assigned products.</td></tr>}
           </tbody>
         </table>
+        <AdminPagination
+          currentPage={page}
+          totalItems={pagination?.total || 0}
+          onPageChange={load}
+        />
       </div>}
     </section>
   );
@@ -758,20 +772,25 @@ function ManagerOrders({ permissions }) {
   const [orders, setOrders] = useState([]);
   const [status, setStatus] = useState("loading");
   const [error, setError] = useState("");
+  const [page, setPage] = useState(1);
+  const [pagination, setPagination] = useState(null);
   const includeDetails = permissions.includes("VIEW_ORDER_DETAILS");
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (targetPage = page) => {
     setStatus("loading");
     setError("");
     try {
-      const result = await authRequest("manager/orders");
+      const query = new URLSearchParams({ page: String(targetPage), limit: String(PAGE_SIZE) });
+      const result = await authRequest(`manager/orders?${query.toString()}`, { includeEnvelope: true });
       setOrders(Array.isArray(result?.data) ? result.data : []);
+      setPagination(result.pagination || null);
+      setPage(targetPage);
       setStatus("ready");
     } catch (requestError) {
       setError(requestError.message || "Orders could not be loaded.");
       setStatus("error");
     }
-  }, []);
+  }, [page]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -792,6 +811,11 @@ function ManagerOrders({ permissions }) {
             {orders.length === 0 && <tr><td colSpan={includeDetails ? 5 : 4} className="px-4 py-8 text-center text-zinc-500">No orders include your assigned products.</td></tr>}
           </tbody>
         </table>
+        <AdminPagination
+          currentPage={page}
+          totalItems={pagination?.total || 0}
+          onPageChange={load}
+        />
       </div>}
     </section>
   );
@@ -832,7 +856,7 @@ function ManagerInventoryPage({ section, permissions }) {
     setStatus("loading");
     setError("");
     try {
-      const query = new URLSearchParams({ page: String(targetPage), limit: "100" });
+      const query = new URLSearchParams({ page: String(targetPage), limit: String(PAGE_SIZE) });
       if (search.trim()) query.set("search", search.trim());
       if (section === "reports" && stockFilter !== "ALL") {
         query.set("inStock", stockFilter === "IN_STOCK" ? "true" : "false");
@@ -868,6 +892,10 @@ function ManagerInventoryPage({ section, permissions }) {
   useEffect(() => {
     if (permitted) load(1);
   }, [load, permitted]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [search, stockFilter, alertFilter, alertSort]);
 
   if (!permitted) {
     return <AccessDenied>{config.title} access has not been enabled.</AccessDenied>;
@@ -1024,15 +1052,11 @@ function ManagerInventoryPage({ section, permissions }) {
               {!rows.length && <tr><td colSpan={6} className="px-4 py-10 text-center text-zinc-500">{section === "alerts" ? "No products are currently below configured thresholds or out of stock." : section === "history" ? "No stock changes have been recorded for your assigned products." : "No assigned products match this report."}</td></tr>}
             </tbody>
           </table>
-          {pagination && pagination.totalPages > 1 && (
-            <nav className="flex items-center justify-between border-t border-zinc-200 px-4 py-3 text-xs dark:border-zinc-800" aria-label="Inventory report pages">
-              <p>Page {pagination.page} of {pagination.totalPages} · {pagination.total} records</p>
-              <div className="flex gap-2">
-                <button type="button" disabled={page <= 1 || status === "loading"} onClick={() => load(page - 1)} className="rounded-lg border border-zinc-200 px-3 py-2 disabled:opacity-50 dark:border-zinc-800">Previous</button>
-                <button type="button" disabled={page >= pagination.totalPages || status === "loading"} onClick={() => load(page + 1)} className="rounded-lg border border-zinc-200 px-3 py-2 disabled:opacity-50 dark:border-zinc-800">Next</button>
-              </div>
-            </nav>
-          )}
+          <AdminPagination
+            currentPage={page}
+            totalItems={pagination?.total || 0}
+            onPageChange={load}
+          />
         </div>
       )}
     </section>

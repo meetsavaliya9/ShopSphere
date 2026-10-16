@@ -20,6 +20,7 @@ import { formatPrice } from "../../../lib/catalog";
 import { Badge } from "../../../components/admin/badge";
 import { Modal } from "../../../components/admin/modal";
 import { ProductImage } from "../../../components/product-image";
+import { getPaginationItems, getPaginationRange } from "../../../lib/pagination";
 
 const MAX_IMAGE_SIZE = 5 * 1024 * 1024;
 const IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
@@ -69,6 +70,12 @@ export default function AdminProductsPage() {
   const [selectedCategory, setSelectedCategory] = useState("ALL");
   const [stockFilter, setStockFilter] = useState("ALL");
 
+  // Pagination
+  const [page, setPage] = useState(1);
+  const [limit] = useState(10);
+  const [total, setTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(0);
+
   // Modal states
   const [addModalOpen, setAddModalOpen] = useState(false);
   const [editModalOpen, setEditModalOpen] = useState(false);
@@ -100,12 +107,22 @@ export default function AdminProductsPage() {
     setStatus("loading");
     setError("");
     try {
+      const query = new URLSearchParams({
+        page: String(page),
+        limit: String(limit),
+        ...(search && { search }),
+        ...(selectedCategory !== "ALL" && { category: selectedCategory }),
+        ...(stockFilter !== "ALL" && { inStock: stockFilter === "IN_STOCK" })
+      });
       const [prodRes, userRes] = await Promise.all([
-        authRequest("admin/products"),
+        authRequest(`admin/products?${query}`, { includeEnvelope: true }),
         authRequest("admin/users")
       ]);
-      const productList = Array.isArray(prodRes) ? prodRes : prodRes?.data || [];
+      const productList = Array.isArray(prodRes?.data) ? prodRes.data : [];
+      const pagination = prodRes?.pagination || { page, limit, total: 0, totalPages: 0 };
       setProducts(productList);
+      setTotal(pagination.total);
+      setTotalPages(pagination.totalPages);
       const userList = Array.isArray(userRes) ? userRes : userRes?.data || [];
       setManagers(userList.filter((u) => ["MANAGER", "INVENTORY_MANAGER"].includes(u.role)));
       try {
@@ -131,11 +148,15 @@ export default function AdminProductsPage() {
       setError(err.message || "Failed to load products.");
       setStatus("error");
     }
-  }, []);
+  }, [page, limit, search, selectedCategory, stockFilter]);
 
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [search, selectedCategory, stockFilter]);
 
   const categories = Array.from(new Set([
     ...categoryNames,
@@ -261,18 +282,17 @@ export default function AdminProductsPage() {
     setImageError("");
   }
 
-  // Filtered products
-  const filteredProducts = products.filter((p) => {
-    const matchesSearch = search.trim() === "" ||
-      p.name.toLowerCase().includes(search.toLowerCase()) ||
-      p.category.toLowerCase().includes(search.toLowerCase()) ||
-      String(p.id) === search.trim();
-    const matchesCat = selectedCategory === "ALL" || p.category === selectedCategory;
-    const matchesStock = stockFilter === "ALL" ||
-      (stockFilter === "IN_STOCK" && p.inStock) ||
-      (stockFilter === "OUT_OF_STOCK" && !p.inStock);
-    return matchesSearch && matchesCat && matchesStock;
-  });
+  // Products are filtered and paginated server-side; use the page of results directly.
+  const filteredProducts = products;
+
+  const paginationInfo = getPaginationRange(page, limit, total);
+  const { startItem, endItem, isFirstPage, isLastPage } = paginationInfo;
+  const paginationItems = getPaginationItems(page, totalPages);
+
+  function goToPage(targetPage) {
+    if (targetPage < 1 || targetPage > totalPages || targetPage === page) return;
+    setPage(targetPage);
+  }
 
   function openAddModal() {
     resetImageForm();
@@ -643,6 +663,72 @@ export default function AdminProductsPage() {
               )}
             </tbody>
           </table>
+        </div>
+
+        {/* Pagination Controls */}
+        <div className="mt-6 flex flex-col items-center sm:flex-row sm:items-start w-full gap-2 sm:gap-4 border-t border-zinc-200 pt-4 dark:border-zinc-800">
+          {totalPages > 1 ? (
+            <>
+              <p className="text-xs text-muted text-center sm:text-left">
+                Showing {startItem}–{endItem} of {total} products
+              </p>
+              <nav className="mx-auto flex flex-wrap items-center justify-center gap-1 sm:gap-2" aria-label="Product pagination">
+                <button
+                  type="button"
+                  onClick={() => goToPage(page - 1)}
+                  disabled={isFirstPage}
+                  aria-label="Previous page"
+                  className="inline-flex min-h-9 items-center justify-center px-3.5 py-1.5 text-xs font-bold uppercase tracking-wider transition-colors disabled:cursor-not-allowed disabled:text-[#b0b0b0] enabled:text-ink enabled:hover:text-ink/70"
+                >
+                  Previous
+                </button>
+                <div className="flex items-center gap-1 sm:gap-1.5">
+                  {paginationItems.map((item, idx) => {
+                    if (item === "...") {
+                      return (
+                        <span
+                          key={`ellipsis-${idx}`}
+                          className="inline-flex h-9 w-6 items-center justify-center text-xs font-bold text-muted select-none sm:h-9 sm:w-8"
+                          aria-hidden="true"
+                        >
+                          …
+                        </span>
+                      );
+                    }
+                    const isCurrent = item === page;
+                    return (
+                      <button
+                        key={`page-${item}`}
+                        type="button"
+                        onClick={() => goToPage(item)}
+                        disabled={isCurrent}
+                        aria-current={isCurrent ? "page" : undefined}
+                        aria-label={isCurrent ? `Page ${item}, current page` : `Go to page ${item}`}
+                        className={`inline-flex h-9 w-9 items-center justify-center rounded-full text-xs font-semibold transition-all sm:h-9 sm:w-9 sm:text-sm ${
+                          isCurrent ? "bg-ink text-white shadow-xs" : "text-ink hover:bg-surface"
+                        }`}
+                      >
+                        {item}
+                      </button>
+                    );
+                  })}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => goToPage(page + 1)}
+                  disabled={isLastPage}
+                  aria-label="Next page"
+                  className="inline-flex min-h-9 items-center justify-center px-3.5 py-1.5 text-xs font-bold uppercase tracking-wider transition-colors disabled:cursor-not-allowed disabled:text-[#b0b0b0] enabled:text-ink enabled:hover:text-ink/70"
+                >
+                  Next
+                </button>
+              </nav>
+            </>
+          ) : total > 0 ? (
+            <p className="text-xs text-muted">
+              Showing {startItem}–{endItem} of {total} products
+            </p>
+          ) : null}
         </div>
       </div>
 

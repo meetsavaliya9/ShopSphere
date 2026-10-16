@@ -19,6 +19,8 @@ import { authRequest } from "../../../lib/api/auth";
 import { Badge } from "../../../components/admin/badge";
 import { Modal } from "../../../components/admin/modal";
 import { StatCard } from "../../../components/admin/stat-card";
+import AdminPagination from "../../../components/admin/admin-pagination";
+import { PAGE_SIZE } from "../../../components/admin/admin-pagination";
 
 export default function AdminPaymentsPage() {
   const [payments, setPayments] = useState([]);
@@ -33,25 +35,35 @@ export default function AdminPaymentsPage() {
 
   // Pagination
   const [page, setPage] = useState(1);
-  const pageSize = 12;
+  const [total, setTotal] = useState(0);
 
   const loadPayments = useCallback(async () => {
     setStatus("loading");
     setError("");
     try {
-      const response = await authRequest("admin/payments");
-      const data = Array.isArray(response) ? response : response?.data || [];
+      const q = new URLSearchParams({
+        page: String(page),
+        limit: String(PAGE_SIZE)
+      });
+      const response = await authRequest(`admin/payments?${q.toString()}`, { includeEnvelope: true });
+      const data = Array.isArray(response?.data) ? response.data : [];
+      const pagination = response?.pagination || { page, limit: PAGE_SIZE, total: 0, totalPages: 0 };
       setPayments(data);
+      setTotal(pagination.total);
       setStatus("ready");
     } catch (err) {
       setError(err.message || "Failed to load payment transactions.");
       setStatus("error");
     }
-  }, []);
+  }, [page]);
 
   useEffect(() => {
     loadPayments();
   }, [loadPayments]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [search, statusFilter]);
 
   function openDetails(payment) {
     setSelectedPayment(payment);
@@ -59,43 +71,61 @@ export default function AdminPaymentsPage() {
   }
 
   // Export payments to CSV
-  function exportCSV() {
+  async function exportCSV() {
     if (!payments.length) return;
-    const headers = [
-      "Payment ID",
-      "Order ID",
-      "Customer Name",
-      "Customer Email",
-      "Amount (INR)",
-      "Currency",
-      "Status",
-      "Razorpay Order ID",
-      "Razorpay Payment ID",
-      "Date"
-    ];
-    const rows = filteredPayments.map((p) => [
-      p.id,
-      p.orderId,
-      `"${(p.customerName || "").replaceAll('"', '""')}"`,
-      `"${(p.customerEmail || "").replaceAll('"', '""')}"`,
-      p.amount,
-      p.currency || "INR",
-      p.status,
-      p.razorpayOrderId || "",
-      p.razorpayPaymentId || "",
-      new Date(p.createdAt).toISOString()
-    ]);
-    const csvContent = "data:text/csv;charset=utf-8," + [headers.join(","), ...rows.map((r) => r.join(","))].join("\n");
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement("a");
-    link.setAttribute("href", encodedUri);
-    link.setAttribute("download", `shopsphere-payments-${new Date().toISOString().slice(0, 10)}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    setStatus("loading");
+    try {
+      const exportedPayments = [];
+      let totalPages = 1;
+      for (let exportPage = 1; exportPage <= totalPages; exportPage += 1) {
+        const q = new URLSearchParams({ page: String(exportPage), limit: "100" });
+        const response = await authRequest(`admin/payments?${q.toString()}`, { includeEnvelope: true });
+        if (!Array.isArray(response?.data) || !response?.pagination) {
+          throw new Error("The payments export response was invalid.");
+        }
+        exportedPayments.push(...response.data);
+        totalPages = response.pagination.totalPages;
+      }
+      const headers = [
+        "Payment ID",
+        "Order ID",
+        "Customer Name",
+        "Customer Email",
+        "Amount (INR)",
+        "Currency",
+        "Status",
+        "Razorpay Order ID",
+        "Razorpay Payment ID",
+        "Date"
+      ];
+      const rows = exportedPayments.map((p) => [
+        p.id,
+        p.orderId,
+        `"${(p.customerName || "").replaceAll('"', '""')}"`,
+        `"${(p.customerEmail || "").replaceAll('"', '""')}"`,
+        p.amount,
+        p.currency || "INR",
+        p.status,
+        p.razorpayOrderId || "",
+        p.razorpayPaymentId || "",
+        new Date(p.createdAt).toISOString()
+      ]);
+      const csvContent = "data:text/csv;charset=utf-8," + [headers.join(","), ...rows.map((r) => r.join(","))].join("\n");
+      const encodedUri = encodeURI(csvContent);
+      const link = document.createElement("a");
+      link.setAttribute("href", encodedUri);
+      link.setAttribute("download", `shopsphere-payments-${new Date().toISOString().slice(0, 10)}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } catch (err) {
+      setError(err.message || "The payments export could not be created.");
+    } finally {
+      setStatus("ready");
+    }
   }
 
-  // Filter payments
+  // Filter payments (client-side for now since backend doesn't support search/filter)
   const filteredPayments = useMemo(() => {
     return payments.filter((p) => {
       const query = search.toLowerCase();
@@ -110,12 +140,6 @@ export default function AdminPaymentsPage() {
       return matchesSearch && matchesStatus;
     });
   }, [payments, search, statusFilter]);
-
-  const totalPages = Math.max(1, Math.ceil(filteredPayments.length / pageSize));
-  const paginatedPayments = useMemo(() => {
-    const start = (page - 1) * pageSize;
-    return filteredPayments.slice(start, start + pageSize);
-  }, [filteredPayments, page, pageSize]);
 
   // Summary statistics
   const stats = useMemo(() => {
@@ -268,14 +292,14 @@ export default function AdminPaymentsPage() {
                     Loading payment records...
                   </td>
                 </tr>
-              ) : paginatedPayments.length === 0 ? (
+              ) : filteredPayments.length === 0 ? (
                 <tr>
                   <td colSpan={8} className="py-12 text-center text-zinc-400">
                     No payment transactions found.
                   </td>
                 </tr>
               ) : (
-                paginatedPayments.map((p) => (
+                filteredPayments.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE).map((p) => (
                   <tr key={p.id} className="hover:bg-zinc-50/60 dark:hover:bg-zinc-900/50 transition-colors">
                     <td className="px-4 py-3.5 font-mono font-semibold text-zinc-900 dark:text-zinc-100">
                       TXN-{p.id}
@@ -332,6 +356,13 @@ export default function AdminPaymentsPage() {
             </tbody>
           </table>
         </div>
+
+        {/* Pagination Controls */}
+        <AdminPagination
+          currentPage={page}
+          totalItems={filteredPayments.length}
+          onPageChange={setPage}
+        />
       </div>
 
       {/* Payment Details Modal */}

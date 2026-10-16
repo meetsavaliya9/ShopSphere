@@ -951,6 +951,115 @@ describe("Inventory Manager roles and permissions", () => {
     expect(updateWhere).toEqual({ id: 10, managerId: 7 });
   });
 
+  it("includes both manager-created and Admin-created (null managerId) products in manager product list", async () => {
+    let capturedWhere;
+    const service = new ProductService({
+      client: {
+        product: {
+          async findMany({ where }) {
+            capturedWhere = where;
+            return [];
+          },
+          async count() {
+            return 0;
+          }
+        }
+      }
+    });
+
+    await service.list({ page: "1", limit: "12" }, { managerId: 7 });
+    expect(capturedWhere.OR).toEqual([{ managerId: 7 }, { managerId: null }]);
+
+    await service.list({ search: "T-Shirt", page: "1", limit: "12" }, { managerId: 7 });
+    expect(capturedWhere.AND).toEqual([
+      { OR: [{ managerId: 7 }, { managerId: null }] },
+      {
+        OR: [
+          { name: { contains: "T-Shirt" } },
+          { description: { contains: "T-Shirt" } },
+          { category: { contains: "T-Shirt" } }
+        ]
+      }
+    ]);
+  });
+
+  it("allows Inventory Managers to inspect and adjust stock for Admin-created products (null managerId)", async () => {
+    let queriedWhere;
+    let updatedWhere;
+    const adminProduct = {
+      id: 20,
+      name: "Admin Created Product",
+      price: 99.99,
+      inStock: true,
+      category: "Electronics",
+      stockQuantity: 10,
+      lowStockThreshold: 2,
+      lowStockAlertActive: false,
+      lowStockAlertAt: null,
+      managerId: null,
+      manager: null
+    };
+
+    const service = new ProductService({
+      client: {
+        product: {
+          async findFirst({ where }) {
+            queriedWhere = where;
+            return adminProduct;
+          },
+          async findUnique({ where }) {
+            return adminProduct;
+          },
+          async updateMany({ where }) {
+            updatedWhere = where;
+            return { count: 1 };
+          }
+        },
+        inventorystockhistory: {
+          async create() {
+            return {};
+          }
+        }
+      }
+    });
+
+    const details = await service.getManagerProduct("20", 7);
+    expect(details.id).toBe(20);
+    expect(queriedWhere).toEqual({
+      id: 20,
+      OR: [{ managerId: 7 }, { managerId: null }]
+    });
+
+    await service.adjustStock("20", 7, 7, {
+      quantity: 15,
+      expectedQuantity: 10,
+      reason: "Restocked by manager"
+    });
+    expect(updatedWhere).toMatchObject({
+      id: 20,
+      OR: [{ managerId: 7 }, { managerId: null }],
+      stockQuantity: 10
+    });
+  });
+
+  it("prevents Inventory Managers from deleting Admin-created products (null managerId)", async () => {
+    let deleteWhere;
+    const service = new ProductService({
+      client: {
+        product: {
+          async deleteMany({ where }) {
+            deleteWhere = where;
+            return { count: 0 };
+          }
+        }
+      }
+    });
+
+    await expect(service.removeManagerProduct("20", 7))
+      .rejects.toThrow("Assigned product not found.");
+    expect(deleteWhere).toEqual({ id: 20, managerId: 7 });
+  });
+
   it("allows Inventory Managers into the shared manager area, not the Admin area", () => {
     const context = (role) => ({
       switchToHttp: () => ({ getRequest: () => ({ user: { role } }) })

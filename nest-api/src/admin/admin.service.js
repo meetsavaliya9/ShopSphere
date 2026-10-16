@@ -203,40 +203,56 @@ class AdminService {
     return { databaseName, tables: inventory };
   }
 
-  async customers() {
-    const users = await this.prisma.user.findMany({
-      where: { role: "CUSTOMER" },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        emailVerifiedAt: true,
-        order: {
-          select: {
-            status: true,
-            totalAmount: true,
-            payment: { select: { status: true } }
+  async customers(query = {}) {
+    const page = this.parseInteger(query.page, 1, 1, 1_000_000, "page");
+    const limit = this.parseInteger(query.limit, 10, 1, 100, "limit");
+    const skip = (page - 1) * limit;
+    const [users, total] = await Promise.all([
+      this.prisma.user.findMany({
+        where: { role: "CUSTOMER" },
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          emailVerifiedAt: true,
+          order: {
+            select: {
+              status: true,
+              totalAmount: true,
+              payment: { select: { status: true } }
+            }
           }
-        }
-      },
-      orderBy: { createdAt: "desc" }
-    });
-    return users.map((user) => {
-      const verifiedOrders = user.order.filter(
-        (order) => order.status === "PAID" && order.payment?.status === "CAPTURED"
-      );
-      return {
-        id: user.id,
-        name: user.name,
-        email: user.email,
-        emailVerifiedAt: user.emailVerifiedAt,
-        totalOrders: user.order.length,
-        paidOrdersCount: verifiedOrders.length,
-        totalSpent: Math.round(
-          verifiedOrders.reduce((sum, order) => sum + Number(order.totalAmount), 0) * 100
-        ) / 100
-      };
-    });
+        },
+        orderBy: { createdAt: "desc" },
+        skip,
+        take: limit
+      }),
+      this.prisma.user.count({ where: { role: "CUSTOMER" } })
+    ]);
+    return {
+      data: users.map((user) => {
+        const verifiedOrders = user.order.filter(
+          (order) => order.status === "PAID" && order.payment?.status === "CAPTURED"
+        );
+        return {
+          id: user.id,
+          name: user.name,
+          email: user.email,
+          emailVerifiedAt: user.emailVerifiedAt,
+          totalOrders: user.order.length,
+          paidOrdersCount: verifiedOrders.length,
+          totalSpent: Math.round(
+            verifiedOrders.reduce((sum, order) => sum + Number(order.totalAmount), 0) * 100
+          ) / 100
+        };
+      }),
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit)
+      }
+    };
   }
 
   async customerDetails(value) {
@@ -343,8 +359,27 @@ class AdminService {
     };
   }
 
-  async listCoupons() {
-    return this.prisma.coupon.findMany({ orderBy: { createdAt: "desc" } });
+  async listCoupons(query = {}) {
+    const page = this.parseInteger(query.page, 1, 1, 1_000_000, "page");
+    const limit = this.parseInteger(query.limit, 10, 1, 100, "limit");
+    const skip = (page - 1) * limit;
+    const [coupons, total] = await Promise.all([
+      this.prisma.coupon.findMany({
+        orderBy: { createdAt: "desc" },
+        skip,
+        take: limit
+      }),
+      this.prisma.coupon.count()
+    ]);
+    return {
+      data: coupons,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit)
+      }
+    };
   }
 
   async createCoupon(input) {
@@ -698,6 +733,15 @@ class AdminService {
 
   updateSettings(input) {
     return updateStoreSettings(input);
+  }
+
+  parseInteger(value, fallback, minimum, maximum, field) {
+    if (value === undefined || value === "") return fallback;
+    const parsed = Number(value);
+    if (!Number.isSafeInteger(parsed) || parsed < minimum || parsed > maximum) {
+      throw new BadRequestException(`${field} must be between ${minimum} and ${maximum}.`);
+    }
+    return parsed;
   }
 
   parseId(value, label) {

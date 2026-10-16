@@ -136,8 +136,8 @@ class AdminOrderController {
     });
   }
 
-  async listPayments(response) {
-    response.status(200).json({ data: await this.orders.listAdminPayments() });
+  async listPayments(query, response) {
+    response.status(200).json(await this.orders.listAdminPayments(query));
   }
 }
 
@@ -147,7 +147,7 @@ class ManagerOrderController {
     this.prisma = prismaService.client;
   }
 
-  async list(request, response) {
+  async list(request, query, response) {
     const permissions = request.user.role === "INVENTORY_MANAGER"
       ? (await this.prisma.inventorymanagerpermission.findMany({
           where: { userId: request.user.id },
@@ -157,12 +157,13 @@ class ManagerOrderController {
     if (!permissions.includes("VIEW_ORDERS")) {
       throw new ForbiddenException("You do not have permission to view orders.");
     }
-    response.status(200).json({
-      data: await this.orders.listManagerOrders(
+    response.status(200).json(
+      await this.orders.listManagerOrders(
         request.user.id,
-        permissions.includes("VIEW_ORDER_DETAILS")
+        permissions.includes("VIEW_ORDER_DETAILS"),
+        query
       )
-    });
+    );
   }
 }
 
@@ -172,7 +173,7 @@ UseGuards(SessionAuthGuard, AdminOnlyGuard)(AdminOrderController);
 const adminOrderPrototype = AdminOrderController.prototype;
 applyRoute(adminOrderPrototype, "listOrders", Get, "orders", [], [[Query, 0], [Res, 1]]);
 applyRoute(adminOrderPrototype, "updateOrder", Patch, "orders/:id/status", [CsrfGuard], [[() => Param("id"), 0], [Body, 1], [Res, 2]]);
-applyRoute(adminOrderPrototype, "listPayments", Get, "payments", [], [[Res, 0]]);
+applyRoute(adminOrderPrototype, "listPayments", Get, "payments", [], [[Query, 0], [Res, 1]]);
 
 Inject(OrderService)(ManagerOrderController, undefined, 0);
 Inject(require("../prisma/prisma.service").PrismaService)(ManagerOrderController, undefined, 1);
@@ -184,7 +185,7 @@ applyRoute(
   Get,
   "",
   [],
-  [[Req, 0], [Res, 1]]
+  [[Req, 0], [Query, 1], [Res, 2]]
 );
 
 class RazorpayWebhookController {

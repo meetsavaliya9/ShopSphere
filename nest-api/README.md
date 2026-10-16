@@ -39,6 +39,39 @@ npm run create:privileged-user
 
 The command prompts for the role, name, email, and a password entered without terminal echo. It hashes the password, marks the new account's email as verified, refuses duplicate emails, and does not create, change, or delete any account when validation fails. Use a secure password and keep it private. Do not grant elevated roles through customer registration.
 
+### Repeatable Admin/Manager seed
+
+Use `prisma/seed-accounts.ts` with the existing `npm run seed:accounts` command for a repeatable seed. It uses the same `bcryptjs` library and 12-round hash as customer authentication. Existing accounts with the requested role are skipped unchanged; an existing email with another role stops the seed before either account is created. Newly created privileged accounts are marked email-verified so the existing direct ADMIN/MANAGER login flow works. No password or database URL is printed.
+
+The seed requires `DATABASE_URL` and these environment variables:
+
+- `ADMIN_NAME`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`
+- `MANAGER_NAME`, `MANAGER_EMAIL`, `MANAGER_PASSWORD`
+- `EXPECTED_DATABASE_HOST`, `EXPECTED_DATABASE_NAME`
+
+Before a production run, verify the Aiven service/hostname and database name in Aiven Console. Configure `DATABASE_URL` only in the private `nest-api/.env` or the one-time process environment; never commit it. The script checks that the URL matches the two expected-target variables, connects, and checks `SELECT DATABASE()` before account lookup or writes.
+
+PowerShell example from `nest-api` (the password prompts are hidden; use the exact Aiven hostname and database name you verified):
+
+```powershell
+$env:EXPECTED_DATABASE_HOST = Read-Host "Verified Aiven hostname"
+$env:EXPECTED_DATABASE_NAME = Read-Host "Verified Aiven database name"
+$env:ADMIN_NAME = Read-Host "Admin name"
+$env:ADMIN_EMAIL = Read-Host "Admin email"
+$adminPassword = Read-Host "Admin password" -AsSecureString
+$env:ADMIN_PASSWORD = [System.Net.NetworkCredential]::new("", $adminPassword).Password
+$env:MANAGER_NAME = Read-Host "Manager name"
+$env:MANAGER_EMAIL = Read-Host "Manager email"
+$managerPassword = Read-Host "Manager password" -AsSecureString
+$env:MANAGER_PASSWORD = [System.Net.NetworkCredential]::new("", $managerPassword).Password
+npm run seed:accounts
+Remove-Item Env:ADMIN_NAME, Env:ADMIN_EMAIL, Env:ADMIN_PASSWORD, Env:MANAGER_NAME, Env:MANAGER_EMAIL, Env:MANAGER_PASSWORD, Env:EXPECTED_DATABASE_HOST, Env:EXPECTED_DATABASE_NAME
+$adminPassword = $null
+$managerPassword = $null
+```
+
+The command does not run migrations. Review the printed verified host/database before allowing it to proceed; if the Aiven target has not been independently confirmed, do not run it. Re-running with the same inputs is safe and skips the accounts without changing their passwords, names, or roles.
+
 ## Tests
 
 ```powershell

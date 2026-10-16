@@ -272,7 +272,7 @@ function managerRoute(method, decorator, path, guards, parameters) {
   if (guards.length) UseGuards(...guards)(managerPrototype, method, descriptor);
   for (const [factory, index] of parameters) factory()(managerPrototype, method, index);
 }
-managerRoute("list", Get, "", [], [[Req, 0], [Res, 1]]);
+managerRoute("list", Get, "", [], [[Req, 0], [Query, 1], [Res, 2]]);
 managerRoute("create", Post, "", [CsrfGuard], [[Req, 0], [Body, 1], [Res, 2]]);
 managerRoute("update", Patch, ":id", [CsrfGuard], [[Req, 0], [() => Param("id"), 1], [Body, 2], [Res, 3]]);
 managerRoute("remove", Delete, ":id", [CsrfGuard], [[Req, 0], [() => Param("id"), 1], [Res, 2]]);

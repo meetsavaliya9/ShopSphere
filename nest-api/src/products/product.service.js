@@ -213,7 +213,7 @@ class ProductService {
   async managerInventoryReport(managerId, query = {}) {
     const [statistics, products] = await Promise.all([
       this.managerInventoryStats(managerId, true),
-      this.list({ ...query, limit: "100" }, {
+      this.list({ ...query, limit: query.limit || "10" }, {
         includeInactive: true,
         managerId
       })
@@ -300,7 +300,7 @@ class ProductService {
       return order === "asc" ? comparison : -comparison;
     });
     const page = this.parseInteger(query.page, 1, 1, 1_000_000, "page");
-    const limit = this.parseInteger(query.limit, 24, 1, 100, "limit");
+    const limit = this.parseInteger(query.limit, 10, 1, 100, "limit");
     const total = alerts.length;
     return {
       data: alerts.slice((page - 1) * limit, page * limit),
@@ -312,7 +312,7 @@ class ProductService {
 
   async managerStockHistory(managerId, query = {}) {
     const page = this.parseInteger(query.page, 1, 1, 1_000_000, "page");
-    const limit = this.parseInteger(query.limit, 25, 1, 100, "limit");
+    const limit = this.parseInteger(query.limit, 10, 1, 100, "limit");
     const where = {
       product: { is: { managerId: Number(managerId) } }
     };
@@ -360,8 +360,26 @@ class ProductService {
     if (query.inStock !== undefined) {
       where.inStock = query.inStock === "true" || query.inStock === true;
     }
-    if (managerId !== undefined) where.managerId = Number(managerId);
-    if (query.search) {
+    if (managerId !== undefined) {
+      const numericManagerId = Number(managerId);
+      const managerCondition = { OR: [{ managerId: numericManagerId }, { managerId: null }] };
+      if (query.search) {
+        const search = String(query.search).trim();
+        if (search.length > 200) throw new BadRequestException("Search term is too long.");
+        where.AND = [
+          managerCondition,
+          {
+            OR: [
+              { name: { contains: search } },
+              { description: { contains: search } },
+              { category: { contains: search } }
+            ]
+          }
+        ];
+      } else {
+        where.OR = managerCondition.OR;
+      }
+    } else if (query.search) {
       const search = String(query.search).trim();
       if (search.length > 200) throw new BadRequestException("Search term is too long.");
       where.OR = [
@@ -406,7 +424,8 @@ class ProductService {
         includeInventory: includeInactive || managerId !== undefined,
         includeAvailability: !includeInactive && managerId === undefined
       })),
-      pagination: { page, limit, total, totalPages: Math.ceil(total / limit) }
+      pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
+      count: total
     };
   }
 
@@ -448,7 +467,10 @@ class ProductService {
       throw new BadRequestException("Product ID is invalid.");
     }
     const product = await this.prisma.product.findFirst({
-      where: { id: numericId, managerId: Number(managerId) },
+      where: {
+        id: numericId,
+        OR: [{ managerId: Number(managerId) }, { managerId: null }]
+      },
       include: { manager: { select: { id: true, name: true, email: true } } }
     });
     if (!product) throw new NotFoundException("Assigned product not found.");
@@ -579,7 +601,7 @@ class ProductService {
       const adjust = async (transaction) => {
         const where = numericManagerId === null
           ? { id: numericId }
-          : { id: numericId, managerId: numericManagerId };
+          : { id: numericId, OR: [{ managerId: numericManagerId }, { managerId: null }] };
         const current = numericManagerId === null
           ? await transaction.product.findUnique({ where })
           : await transaction.product.findFirst({ where });
@@ -799,7 +821,10 @@ class ProductService {
     }
     const updateAvailability = async (transaction) => {
       const current = await transaction.product.findFirst({
-        where: { id: numericId, managerId: Number(managerId) }
+        where: {
+          id: numericId,
+          OR: [{ managerId: Number(managerId) }, { managerId: null }]
+        }
       });
       if (!current) throw new NotFoundException("Assigned product not found.");
       if (
@@ -812,7 +837,7 @@ class ProductService {
         const result = await transaction.product.updateMany({
           where: {
             id: numericId,
-            managerId: Number(managerId),
+            OR: [{ managerId: Number(managerId) }, { managerId: null }],
             inStock: current.inStock,
             stockQuantity: current.stockQuantity
           },

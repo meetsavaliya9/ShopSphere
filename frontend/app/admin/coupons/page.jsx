@@ -54,6 +54,23 @@ export default function AdminCouponsPage() {
   // Toggle active status
   const [togglingId, setTogglingId] = useState(null);
 
+  // Pagination
+  const [page, setPage] = useState(1);
+  const pageSize = 10;
+  const [totalPages, setTotalPages] = useState(0);
+
+  const paginatedCoupons = useMemo(() => {
+    const total = filteredCoupons.length;
+    const pages = Math.max(1, Math.ceil(total / pageSize));
+    setTotalPages(pages);
+    const start = (page - 1) * pageSize;
+    return filteredCoupons.slice(start, start + pageSize);
+  }, [filteredCoupons, page, pageSize]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [search, statusFilter]);
+
   const loadCoupons = useCallback(async () => {
     setStatus("loading");
     setError("");
@@ -348,7 +365,7 @@ export default function AdminCouponsPage() {
                   </td>
                 </tr>
               ) : (
-                filteredCoupons.map((coupon) => {
+                paginatedCoupons.map((coupon) => {
                   const now = new Date();
                   const isExpired = coupon.expiresAt && new Date(coupon.expiresAt) < now;
                   return (
@@ -442,6 +459,59 @@ export default function AdminCouponsPage() {
             </tbody>
           </table>
         </div>
+
+        {/* Pagination Controls */}
+        {totalPages > 1 ? (
+          <div className="mt-6 flex flex-col items-center sm:flex-row sm:items-start w-full gap-2 sm:gap-6 border-t border-zinc-200 pt-4 dark:border-zinc-800">
+            <p className="text-xs text-muted text-center sm:text-left">
+              Showing {((page - 1) * pageSize + 1).toString()}–{Math.min(page * pageSize, filteredCoupons.length)} of {filteredCoupons.length} coupons
+            </p>
+            <nav className="mx-auto flex flex-wrap items-center justify-center gap-1 sm:gap-6" aria-label="Coupon pagination">
+              <button
+                type="button"
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                disabled={page <= 1}
+                aria-label="Previous page"
+                className="inline-flex h-9 w-auto items-center justify-center px-3.5 py-1.5 text-xs font-bold uppercase tracking-wider transition-colors disabled:cursor-not-allowed disabled:text-[#b0b0b0] enabled:text-ink enabled:hover:text-ink/70 dark:border-zinc-800"
+              >
+                Previous
+              </button>
+              <div className="flex items-center gap-1 sm:gap-6">
+                {Array.from({ length: totalPages }, (_, i) => i + 1).map((item) => {
+                  const isCurrent = item === page;
+                  return (
+                    <button
+                      key={`page-${item}`}
+                      type="button"
+                      onClick={() => setPage(item)}
+                      disabled={isCurrent}
+                      aria-current={isCurrent ? "page" : undefined}
+                      aria-label={isCurrent ? `Page ${item}, current page` : `Go to page ${item}`}
+                      className={`inline-flex h-9 w-9 items-center justify-center rounded-full text-xs font-semibold transition-all ${
+                        isCurrent ? "bg-ink text-white shadow-xs" : "text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                      }`}
+                    >
+                      {item}
+                    </button>
+                  );
+                })}
+              </div>
+              <button
+                type="button"
+                onClick={() => setPage((current) => Math.min(totalPages, current + 1))}
+                disabled={page >= totalPages}
+                aria-label="Next page"
+                className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-zinc-200 text-zinc-600 hover:bg-zinc-100 disabled:opacity-40 disabled:cursor-not-allowed dark:border-zinc-800 dark:text-zinc-300 transition-colors"
+              >
+                Next
+              </button>
+            </nav>
+          </div>
+        ) : filteredCoupons.length > 0 ? (
+          <p className="mt-6 text-center text-xs text-zinc-500">
+            Showing 1–{filteredCoupons.length} of {filteredCoupons.length} coupons
+          </p>
+        ) : null}
       </div>
 
       {/* Modal: Create or Edit Coupon */}

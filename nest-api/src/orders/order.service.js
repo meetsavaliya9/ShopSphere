@@ -661,58 +661,96 @@ class OrderService {
         }
       ];
     }
-    const orders = await this.prisma.order.findMany({
-      where,
-      include: { ...ORDER_INCLUDE, user: { select: { id: true, name: true, email: true } } },
-      orderBy: { createdAt: "desc" },
-      take: 100
-    });
-    return orders.map((order) => orderView(order, true));
+    const page = this.parseInteger(query.page, 1, 1, 1_000_000, "page");
+    const limit = this.parseInteger(query.limit, 10, 1, 100, "limit");
+    const skip = (page - 1) * limit;
+    const [orders, total] = await Promise.all([
+      this.prisma.order.findMany({
+        where,
+        include: { ...ORDER_INCLUDE, user: { select: { id: true, name: true, email: true } } },
+        orderBy: { createdAt: "desc" },
+        skip,
+        take: limit
+      }),
+      this.prisma.order.count({ where })
+    ]);
+    return {
+      data: orders.map((order) => orderView(order, true)),
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit)
+      }
+    };
   }
 
-  async listManagerOrders(managerId, includeDetails) {
-    const orders = await this.prisma.order.findMany({
-      where: {
-        orderitem: {
-          some: { product: { is: { managerId: Number(managerId) } } }
-        }
-      },
-      select: {
-        id: true,
-        status: true,
-        totalAmount: true,
-        currency: true,
-        createdAt: true,
-        orderitem: {
-          where: { product: { is: { managerId: Number(managerId) } } },
-          select: {
-            id: true,
-            productName: true,
-            quantity: true,
-            unitPrice: true
+  async listManagerOrders(managerId, includeDetails, query = {}) {
+    const page = this.parseInteger(query.page, 1, 1, 1_000_000, "page");
+    const limit = this.parseInteger(query.limit, 10, 1, 100, "limit");
+    const skip = (page - 1) * limit;
+
+    const [orders, total] = await Promise.all([
+      this.prisma.order.findMany({
+        where: {
+          orderitem: {
+            some: { product: { is: { managerId: Number(managerId) } } }
+          }
+        },
+        select: {
+          id: true,
+          status: true,
+          totalAmount: true,
+          currency: true,
+          createdAt: true,
+          orderitem: {
+            where: { product: { is: { managerId: Number(managerId) } } },
+            select: {
+              id: true,
+              productName: true,
+              quantity: true,
+              unitPrice: true
+            }
+          }
+        },
+        orderBy: { createdAt: "desc" },
+        skip,
+        take: limit
+      }),
+      this.prisma.order.count({
+        where: {
+          orderitem: {
+            some: { product: { is: { managerId: Number(managerId) } } }
           }
         }
-      },
-      orderBy: { createdAt: "desc" },
-      take: 100
-    });
-    return orders.map((order) => ({
-      id: order.id,
-      status: order.status,
-      assignedItemsTotal: Math.round(order.orderitem.reduce(
-        (sum, item) => sum + Number(item.unitPrice) * item.quantity,
-        0
-      ) * 100) / 100,
-      currency: order.currency,
-      createdAt: order.createdAt,
-      ...(includeDetails ? {
-        items: order.orderitem.map((item) => ({
-          ...item,
-          unitPrice: Number(item.unitPrice),
-          lineTotal: Math.round(Number(item.unitPrice) * item.quantity * 100) / 100
-        }))
-      } : {})
-    }));
+      })
+    ]);
+
+    return {
+      data: orders.map((order) => ({
+        id: order.id,
+        status: order.status,
+        assignedItemsTotal: Math.round(order.orderitem.reduce(
+          (sum, item) => sum + Number(item.unitPrice) * item.quantity,
+          0
+        ) * 100) / 100,
+        currency: order.currency,
+        createdAt: order.createdAt,
+        ...(includeDetails ? {
+          items: order.orderitem.map((item) => ({
+            ...item,
+            unitPrice: Number(item.unitPrice),
+            lineTotal: Math.round(Number(item.unitPrice) * item.quantity * 100) / 100
+          }))
+        } : {})
+      })),
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit)
+      }
+    };
   }
 
   async updateAdminStatus(id, status) {
@@ -760,30 +798,45 @@ class OrderService {
     return orderView(updated, true);
   }
 
-  async listAdminPayments() {
-    const payments = await this.prisma.payment.findMany({
-      include: {
-        order: {
-          include: { user: { select: { id: true, name: true, email: true } } }
-        }
-      },
-      orderBy: { createdAt: "desc" },
-      take: 100
-    });
-    return payments.map((payment) => ({
-      id: payment.id,
-      orderId: payment.orderId,
-      customerName: payment.order.user.name,
-      customerEmail: payment.order.user.email,
-      amount: Number(payment.amount),
-      currency: payment.currency,
-      status: payment.status,
-      razorpayOrderId: payment.razorpayOrderId || null,
-      razorpayPaymentId: payment.razorpayPaymentId || null,
-      failureCode: payment.failureCode || null,
-      createdAt: payment.createdAt,
-      updatedAt: payment.updatedAt
-    }));
+  async listAdminPayments(query = {}) {
+    const page = this.parseInteger(query.page, 1, 1, 1_000_000, "page");
+    const limit = this.parseInteger(query.limit, 10, 1, 100, "limit");
+    const skip = (page - 1) * limit;
+    const [payments, total] = await Promise.all([
+      this.prisma.payment.findMany({
+        include: {
+          order: {
+            include: { user: { select: { id: true, name: true, email: true } } }
+          }
+        },
+        orderBy: { createdAt: "desc" },
+        skip,
+        take: limit
+      }),
+      this.prisma.payment.count()
+    ]);
+    return {
+      data: payments.map((payment) => ({
+        id: payment.id,
+        orderId: payment.orderId,
+        customerName: payment.order.user.name,
+        customerEmail: payment.order.user.email,
+        amount: Number(payment.amount),
+        currency: payment.currency,
+        status: payment.status,
+        razorpayOrderId: payment.razorpayOrderId || null,
+        razorpayPaymentId: payment.razorpayPaymentId || null,
+        failureCode: payment.failureCode || null,
+        createdAt: payment.createdAt,
+        updatedAt: payment.updatedAt
+      })),
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit)
+      }
+    };
   }
 
   async handleWebhook(rawBody, signature, eventId, body) {
@@ -1177,6 +1230,15 @@ class OrderService {
       throw new ServiceUnavailableException("GST_RATE_PERCENT must be between 0 and 100.");
     }
     return rate;
+  }
+
+  parseInteger(value, fallback, minimum, maximum, field) {
+    if (value === undefined || value === "") return fallback;
+    const parsed = Number(value);
+    if (!Number.isSafeInteger(parsed) || parsed < minimum || parsed > maximum) {
+      throw new BadRequestException(`${field} must be between ${minimum} and ${maximum}.`);
+    }
+    return parsed;
   }
 
   parseId(value) {
