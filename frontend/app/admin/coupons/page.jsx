@@ -59,6 +59,23 @@ export default function AdminCouponsPage() {
   const pageSize = 10;
   const [totalPages, setTotalPages] = useState(0);
 
+  // Filtered coupons
+  const filteredCoupons = useMemo(() => {
+    const now = new Date();
+    return coupons.filter((c) => {
+      const matchesSearch =
+        c.code.toLowerCase().includes(search.toLowerCase()) ||
+        (c.description || "").toLowerCase().includes(search.toLowerCase());
+      const isExpired = c.expiresAt && new Date(c.expiresAt) < now;
+      const matchesStatus =
+        statusFilter === "ALL" ||
+        (statusFilter === "ACTIVE" && c.isActive && !isExpired) ||
+        (statusFilter === "INACTIVE" && !c.isActive) ||
+        (statusFilter === "EXPIRED" && isExpired);
+      return matchesSearch && matchesStatus;
+    });
+  }, [coupons, search, statusFilter]);
+
   const paginatedCoupons = useMemo(() => {
     const total = filteredCoupons.length;
     const pages = Math.max(1, Math.ceil(total / pageSize));
@@ -193,23 +210,6 @@ export default function AdminCouponsPage() {
       setDeleting(false);
     }
   }
-
-  // Filtered coupons
-  const filteredCoupons = useMemo(() => {
-    const now = new Date();
-    return coupons.filter((c) => {
-      const matchesSearch =
-        c.code.toLowerCase().includes(search.toLowerCase()) ||
-        (c.description || "").toLowerCase().includes(search.toLowerCase());
-      const isExpired = c.expiresAt && new Date(c.expiresAt) < now;
-      const matchesStatus =
-        statusFilter === "ALL" ||
-        (statusFilter === "ACTIVE" && c.isActive && !isExpired) ||
-        (statusFilter === "INACTIVE" && !c.isActive) ||
-        (statusFilter === "EXPIRED" && isExpired);
-      return matchesSearch && matchesStatus;
-    });
-  }, [coupons, search, statusFilter]);
 
   // Aggregate stats
   const stats = useMemo(() => {

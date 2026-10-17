@@ -9,6 +9,33 @@ const {
   installCategoryRequestParsing
 } = require("./auth/auth-request-parsing");
 const { AllExceptionsFilter } = require("./common/filters/all-exceptions.filter");
+const multer = require("multer");
+
+// Configure multer for memory storage (preview-only, no disk write)
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 5 * 1024 * 1024 // 5MB limit
+  },
+  fileFilter: (req, file, cb) => {
+    const allowedExtensions = ['.csv', '.xlsx', '.xls'];
+    const allowedMimeTypes = [
+      'text/csv',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'application/vnd.ms-excel'
+    ];
+
+    const ext = file.originalname.toLowerCase().slice(file.originalname.lastIndexOf('.'));
+    const isValidExtension = allowedExtensions.includes(ext);
+    const isValidMimeType = allowedMimeTypes.includes(file.mimetype);
+
+    if (isValidExtension || isValidMimeType) {
+      cb(null, true);
+    } else {
+      cb(new Error('Invalid file type. Only CSV and Excel files are allowed.'));
+    }
+  }
+});
 
 const DEFAULT_HOST = "0.0.0.0";
 const DEFAULT_PORT = 3005;
@@ -76,6 +103,11 @@ async function startApplication() {
     app.setGlobalPrefix("api/v1");
     app.useGlobalFilters(new AllExceptionsFilter());
     app.enableShutdownHooks();
+
+    // Register import preview middleware
+    app.use('/api/v1/admin/products/import/preview', upload.single('file'));
+    app.use('/api/v1/manager/products/import/preview', upload.single('file'));
+
     await app.listen(port, host);
     const address = app.getHttpServer().address();
     const actualPort = address && typeof address === "object" ? address.port : port;

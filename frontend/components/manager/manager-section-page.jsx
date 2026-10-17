@@ -28,6 +28,58 @@ import { useManagerPermissions } from "./manager-panel-layout";
 import AdminPagination from "../admin/admin-pagination";
 import { PAGE_SIZE } from "../admin/admin-pagination";
 
+function ManagerProductDropdown({ children, summary, onToggle, isOpen, ariaLabel, title }) {
+  const detailsRef = useRef(null);
+  const summaryRef = useRef(null);
+
+  useEffect(() => {
+    if (detailsRef.current) {
+      const shouldClose = !isOpen && detailsRef.current.open;
+      if (shouldClose) {
+        detailsRef.current.open = false;
+      }
+    }
+  }, [isOpen]);
+
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (detailsRef.current && !detailsRef.current.contains(event.target) && summaryRef.current && !summaryRef.current.contains(event.target)) {
+        if (detailsRef.current.open) {
+          detailsRef.current.open = false;
+          onToggle?.(false);
+        }
+      }
+    };
+
+    document.addEventListener("click", handleClickOutside);
+    return () => document.removeEventListener("click", handleClickOutside);
+  }, [onToggle]);
+
+  const handleToggle = (event) => {
+    event.preventDefault();
+    if (detailsRef.current) {
+      const newOpenState = !detailsRef.current.open;
+      detailsRef.current.open = newOpenState;
+      onToggle?.(newOpenState);
+    }
+  };
+
+  return (
+    <details ref={detailsRef} className="relative">
+      <summary
+        ref={summaryRef}
+        onClick={handleToggle}
+        aria-label={ariaLabel}
+        title={title}
+        className="flex cursor-pointer list-none items-center gap-1.5 rounded-md border border-zinc-300 px-2.5 py-2 text-[11px] font-semibold hover:bg-zinc-50 focus-visible:outline-2 focus-visible:outline-offset-2 dark:border-zinc-700 dark:hover:bg-zinc-900 [&::-webkit-details-marker]:hidden"
+      >
+        {summary}
+      </summary>
+      {children}
+    </details>
+  );
+}
+
 const EMPTY_PRODUCT = { name: "", category: "", price: "", description: "" };
 
 function formatMoney(value) {
@@ -363,6 +415,7 @@ function ManagerProducts({ permissions, inventoryOnly = false }) {
   const [sortOrder, setSortOrder] = useState("desc");
   const [page, setPage] = useState(1);
   const [pagination, setPagination] = useState(null);
+  const [openDropdownId, setOpenDropdownId] = useState(null);
   const canViewProducts = permissions.includes("VIEW_PRODUCTS");
   const canViewStock = permissions.includes("VIEW_STOCK_LEVELS");
   const canCreate = !inventoryOnly && permissions.includes("CREATE_PRODUCTS");
@@ -518,6 +571,7 @@ function ManagerProducts({ permissions, inventoryOnly = false }) {
         </div>
         <div className="flex gap-2">
           {canCreate && <button type="button" onClick={() => { setEditing(null); setCreating(true); }} className="inline-flex items-center gap-2 rounded-lg bg-zinc-900 px-3 py-2 text-xs font-semibold text-white dark:bg-zinc-100 dark:text-zinc-900"><Plus size={14} />Add product</button>}
+          {canCreate && <Link href="/manager/products/import" className="inline-flex items-center gap-2 rounded-lg border border-zinc-200 px-3 py-2 text-xs dark:border-zinc-800"><Upload size={14} />Import</Link>}
           <button type="button" onClick={loadProducts} className="inline-flex items-center gap-2 rounded-lg border border-zinc-200 px-3 py-2 text-xs dark:border-zinc-800"><RefreshCw size={14} />Refresh</button>
         </div>
       </div>
@@ -607,18 +661,24 @@ function ManagerProducts({ permissions, inventoryOnly = false }) {
                             onClick={() => setSelectedStock(product)}
                             className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-zinc-300 px-2.5 py-2 text-[11px] font-semibold hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:hover:bg-zinc-900"
                           ><Boxes size={14} /><span>Stock</span></button>}
-                          {canShowActions && <details className="relative">
-                            <summary
-                              aria-label={`Actions for ${product.name}`}
-                              title={`Actions for ${product.name}`}
-                              className="flex cursor-pointer list-none items-center gap-1.5 rounded-md border border-zinc-300 px-2.5 py-2 text-[11px] font-semibold hover:bg-zinc-50 focus-visible:outline-2 focus-visible:outline-offset-2 dark:border-zinc-700 dark:hover:bg-zinc-900 [&::-webkit-details-marker]:hidden"
-                            ><Ellipsis size={15} /><span>Actions</span></summary>
+                          {canShowActions && <ManagerProductDropdown
+                            isOpen={openDropdownId === product.id}
+                            onToggle={(isOpen) => setOpenDropdownId(isOpen ? product.id : null)}
+                            ariaLabel={`Actions for ${product.name}`}
+                            title={`Actions for ${product.name}`}
+                            summary={
+                              <>
+                                <Ellipsis size={15} />
+                                <span>Actions</span>
+                              </>
+                            }
+                          >
                             <div className="absolute right-0 z-20 mt-1 min-w-40 rounded-lg border border-zinc-200 bg-white p-1.5 shadow-lg dark:border-zinc-700 dark:bg-zinc-950">
-                              {permissions.includes("VIEW_PRODUCT_DETAILS") && <button type="button" onClick={(event) => { event.currentTarget.closest("details").open = false; viewProductDetails(product); }} className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-xs hover:bg-zinc-100 dark:hover:bg-zinc-900"><Eye size={14} />View details</button>}
-                              {canEditThisProduct && <button type="button" disabled={saving} onClick={(event) => { event.currentTarget.closest("details").open = false; setSelectedStock(null); setCreating(false); setEditing(product); }} className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-xs hover:bg-zinc-100 disabled:opacity-50 dark:hover:bg-zinc-900"><Pencil size={14} />Edit product</button>}
-                              {canDeleteThisProduct && <button type="button" disabled={saving} onClick={(event) => { event.currentTarget.closest("details").open = false; deleteProduct(product); }} className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-xs font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-50 dark:hover:bg-rose-950/40"><Trash2 size={14} />Delete product</button>}
+                              {permissions.includes("VIEW_PRODUCT_DETAILS") && <button type="button" onClick={() => { setOpenDropdownId(null); viewProductDetails(product); }} className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-xs hover:bg-zinc-100 dark:hover:bg-zinc-900"><Eye size={14} />View details</button>}
+                              {canEditThisProduct && <button type="button" disabled={saving} onClick={() => { setOpenDropdownId(null); setSelectedStock(null); setCreating(false); setEditing(product); }} className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-xs hover:bg-zinc-100 disabled:opacity-50 dark:hover:bg-zinc-900"><Pencil size={14} />Edit product</button>}
+                              {canDeleteThisProduct && <button type="button" disabled={saving} onClick={() => { setOpenDropdownId(null); deleteProduct(product); }} className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-xs font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-50 dark:hover:bg-rose-950/40"><Trash2 size={14} />Delete product</button>}
                             </div>
-                          </details>}
+                          </ManagerProductDropdown>}
                         </div>
                       </td>
                     )}

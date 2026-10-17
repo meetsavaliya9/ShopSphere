@@ -5,20 +5,18 @@
   "author": "",
   "private": true,
   "license": "UNLICENSED",
-  
-"scripts": {
-  "build": "npx prisma generate --schema=prisma/schema.prisma && node scripts/check-build.js",
-  "migrate:deploy": "npx prisma migrate deploy --schema=prisma/schema.prisma",
-  "start": "node --use-system-ca --env-file-if-exists=.env index.js",
-  "start:dev": "nodemon --exec \"node --use-system-ca --env-file-if-exists=.env\" index.js",
-  "test": "jest --runInBand --config ./test/jest-e2e.json",
-  "test:cov": "jest --runInBand --coverage --config ./test/jest-e2e.json",
-  "test:e2e": "jest --runInBand --config ./test/jest-e2e.json",
-  "create:privileged-user": "node --use-system-ca --env-file-if-exists=.env scripts/create-privileged-user.js",
-  "reset:admin": "node --use-system-ca --env-file-if-exists=.env scripts/reset-admin.js",
-  "seed:accounts": "tsx --env-file=.env prisma/seed-accounts.ts"
-},
-
+  "scripts": {
+    "build": "npx prisma generate --schema=prisma/schema.prisma && node scripts/check-build.js",
+    "migrate:deploy": "npx prisma migrate deploy --schema=prisma/schema.prisma",
+    "start": "node --use-system-ca --env-file-if-exists=.env index.js",
+    "start:dev": "nodemon --exec \"node --use-system-ca --env-file-if-exists=.env\" index.js",
+    "test": "jest --runInBand --config ./test/jest-e2e.json",
+    "test:cov": "jest --runInBand --coverage --config ./test/jest-e2e.json",
+    "test:e2e": "jest --runInBand --config ./test/jest-e2e.json",
+    "create:privileged-user": "node --use-system-ca --env-file-if-exists=.env scripts/create-privileged-user.js",
+    "reset:admin": "node --use-system-ca --env-file-if-exists=.env scripts/reset-admin.js",
+    "seed:accounts": "tsx --env-file=.env prisma/seed-accounts.ts"
+  },
   "engines": {
     "node": ">=22.15.0"
   },
@@ -31,9 +29,11 @@
     "bcryptjs": "^3.0.3",
     "dotenv": "^18.0.8",
     "express": "^5.1.0",
+    "multer": "^2.4.0",
     "nodemailer": "^10.1.0",
     "reflect-metadata": "^0.2.0",
-    "rxjs": "^7.2.0"
+    "rxjs": "^7.2.0",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@nestjs/testing": "^11.0.1",

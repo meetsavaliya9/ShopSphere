@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import {
   AlertCircle,
   Edit2,
@@ -490,6 +491,14 @@ export default function AdminProductsPage() {
             <RefreshCw size={13} className={status === "loading" ? "animate-spin" : ""} />
             <span>Refresh</span>
           </button>
+
+          <Link
+            href="/admin/products/import"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-xs font-semibold text-zinc-700 hover:bg-zinc-100 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800 transition-colors"
+          >
+            <Upload size={13} />
+            <span>Import Products</span>
+          </Link>
 
           <button
             type="button"

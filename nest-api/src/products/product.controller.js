@@ -16,6 +16,36 @@ const {
   Res,
   UseGuards
 } = require("@nestjs/common");
+const multer = require("multer");
+const { parseImportFile } = require("../utils/file-parser");
+const { validateImportRows } = require("../products/product-import-validator");
+const { detectDuplicates, generateDuplicateSummary } = require("../products/product-duplicate-detector");
+
+// Configure multer for memory storage (preview-only, no disk write)
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 5 * 1024 * 1024 // 5MB limit
+  },
+  fileFilter: (req, file, cb) => {
+    const allowedExtensions = ['.csv', '.xlsx', '.xls'];
+    const allowedMimeTypes = [
+      'text/csv',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'application/vnd.ms-excel'
+    ];
+
+    const ext = file.originalname.toLowerCase().slice(file.originalname.lastIndexOf('.'));
+    const isValidExtension = allowedExtensions.includes(ext);
+    const isValidMimeType = allowedMimeTypes.includes(file.mimetype);
+
+    if (isValidExtension || isValidMimeType) {
+      cb(null, true);
+    } else {
+      cb(new BadRequestException('Invalid file type. Only CSV and Excel files are allowed.'));
+    }
+  }
+});
 const { AuthModule } = require("../auth/auth.module");
 const { AdminRoleGuard } = require("../categories/category.controller");
 const { CsrfGuard, SessionAuthGuard } = require("../auth/auth-security");
@@ -470,6 +500,269 @@ class ProductController {
       : this.products.getInventoryManagerPermissions(request.user.id);
   }
 
+  async adminImportPreview(request, response) {
+    if (!request.file) {
+      throw new BadRequestException("No file uploaded.");
+    }
+
+    const fileBuffer = request.file.buffer;
+    const filename = request.file.originalname;
+    const mimeType = request.file.mimetype;
+
+    try {
+      // Parse the file
+      const parsedData = parseImportFile(fileBuffer, filename, mimeType);
+
+      // Validate headers and rows
+      const validationResult = validateImportRows(parsedData);
+
+      // If headers are invalid, return early
+      if (!validationResult.headerValidation.valid) {
+        return response.status(400).json({
+          success: false,
+          filename: parsedData.filename,
+          headerValidation: validationResult.headerValidation,
+          rowResults: [],
+          summary: null
+        });
+      }
+
+      // Detect duplicates against database (no manager filter for Admin)
+      const prisma = this.products.prisma;
+      const afterDuplicateDetection = await detectDuplicates(
+        validationResult.rowResults,
+        prisma,
+        null
+      );
+
+      // Generate summary
+      const summary = generateDuplicateSummary(afterDuplicateDetection);
+
+      response.status(200).json({
+        success: true,
+        filename: parsedData.filename,
+        headerValidation: validationResult.headerValidation,
+        rowResults: afterDuplicateDetection,
+        summary
+      });
+    } catch (error) {
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
+      throw new BadRequestException(`Failed to process file: ${error.message}`);
+    }
+  }
+
+  async managerImportPreview(request, response) {
+    const permissions = await this.managerPermissions(request);
+    if (!permissions.includes("CREATE_PRODUCTS")) {
+      throw new ForbiddenException("You do not have permission to import products.");
+    }
+
+    if (!request.file) {
+      throw new BadRequestException("No file uploaded.");
+    }
+
+    const fileBuffer = request.file.buffer;
+    const filename = request.file.originalname;
+    const mimeType = request.file.mimetype;
+    const managerId = request.user.id;
+
+    try {
+      // Parse the file
+      const parsedData = parseImportFile(fileBuffer, filename, mimeType);
+
+      // Validate headers and rows
+      const validationResult = validateImportRows(parsedData);
+
+      // If headers are invalid, return early
+      if (!validationResult.headerValidation.valid) {
+        return response.status(400).json({
+          success: false,
+          filename: parsedData.filename,
+          headerValidation: validationResult.headerValidation,
+          rowResults: [],
+          summary: null
+        });
+      }
+
+      // Detect duplicates against database (with manager filter)
+      const prisma = this.products.prisma;
+      const afterDuplicateDetection = await detectDuplicates(
+        validationResult.rowResults,
+        prisma,
+        managerId
+      );
+
+      // Generate summary
+      const summary = generateDuplicateSummary(afterDuplicateDetection);
+
+      response.status(200).json({
+        success: true,
+        filename: parsedData.filename,
+        headerValidation: validationResult.headerValidation,
+        rowResults: afterDuplicateDetection,
+        summary
+      });
+    } catch (error) {
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
+      throw new BadRequestException(`Failed to process file: ${error.message}`);
+    }
+  }
+
+  async adminImport(request, response) {
+    if (!request.body || !Array.isArray(request.body.products)) {
+      throw new BadRequestException("Import data must include a products array.");
+    }
+
+    const productsToImport = request.body.products;
+    const results = {
+      total: productsToImport.length,
+      successful: 0,
+      failed: 0,
+      skipped: 0,
+      errors: []
+    };
+
+    for (const productData of productsToImport) {
+      const rowNumber = productData.rowNumber;
+      
+      // Remove rowNumber before validation as it's not a product field
+      const { rowNumber: _, ...dataToValidate } = productData;
+      
+      try {
+        // Validate the product data using the service's validation
+        const validated = this.products.validateProductInput(dataToValidate);
+
+        // Check if it's a duplicate (name + category)
+        const existing = await this.products.prisma.product.findFirst({
+          where: {
+            name: validated.name,
+            category: validated.category
+          }
+        });
+
+        if (existing) {
+          results.skipped++;
+          results.errors.push({
+            row: rowNumber,
+            error: `Product "${validated.name}" in category "${validated.category}" already exists (ID: ${existing.id})`
+          });
+          continue;
+        }
+
+        // Create the product
+        await this.products.prisma.product.create({
+          data: {
+            ...validated,
+            inStock: true,
+            updatedAt: new Date()
+          }
+        });
+
+        results.successful++;
+      } catch (error) {
+        results.failed++;
+        results.errors.push({
+          row: rowNumber,
+          error: error.message || "Failed to import product"
+        });
+      }
+    }
+
+    response.status(200).json({
+      success: true,
+      results
+    });
+  }
+
+  async managerImport(request, response) {
+    const permissions = await this.managerPermissions(request);
+    if (!permissions.includes("CREATE_PRODUCTS")) {
+      throw new ForbiddenException("You do not have permission to import products.");
+    }
+
+    if (!request.body || !Array.isArray(request.body.products)) {
+      throw new BadRequestException("Import data must include a products array.");
+    }
+
+    const productsToImport = request.body.products;
+    const managerId = request.user.id;
+    const results = {
+      total: productsToImport.length,
+      successful: 0,
+      failed: 0,
+      skipped: 0,
+      errors: []
+    };
+
+    for (const productData of productsToImport) {
+      const rowNumber = productData.rowNumber;
+      
+      // Remove rowNumber before validation as it's not a product field
+      const { rowNumber: _, ...dataToValidate } = productData;
+      
+      try {
+        // Validate the product data (manager can only set specific fields)
+        const allowedFields = ["name", "category", "price", "description", "imageUrl", "imagePublicId"];
+        const managerData = {};
+        for (const field of allowedFields) {
+          if (Object.hasOwn(dataToValidate, field)) {
+            managerData[field] = dataToValidate[field];
+          }
+        }
+
+        const validated = this.products.validateProductInput(managerData);
+
+        // Check if it's a duplicate within manager's scope (name + category)
+        const existing = await this.products.prisma.product.findFirst({
+          where: {
+            name: validated.name,
+            category: validated.category,
+            OR: [
+              { managerId: Number(managerId) },
+              { managerId: null }
+            ]
+          }
+        });
+
+        if (existing) {
+          results.skipped++;
+          results.errors.push({
+            row: rowNumber,
+            error: `Product "${validated.name}" in category "${validated.category}" already exists (ID: ${existing.id})`
+          });
+          continue;
+        }
+
+        // Create the product with manager assignment
+        await this.products.prisma.product.create({
+          data: {
+            ...validated,
+            inStock: true,
+            managerId: Number(managerId),
+            updatedAt: new Date()
+          }
+        });
+
+        results.successful++;
+      } catch (error) {
+        results.failed++;
+        results.errors.push({
+          row: rowNumber,
+          error: error.message || "Failed to import product"
+        });
+      }
+    }
+
+    response.status(200).json({
+      success: true,
+      results
+    });
+  }
+
   async updateInventory(request, id, body, response) {
     const permissions = await this.managerPermissions(request);
     if (!permissions.includes("UPDATE_INVENTORY") || !permissions.includes("VIEW_STOCK_LEVELS")) {
@@ -561,6 +854,8 @@ route("replaceInventoryManagerPermissions", Patch, "admin/users/:id/inventory-pe
 route("customerPermissions", Get, "admin/customer-permissions", [SessionAuthGuard, AdminOnlyGuard], [[Res, 0]]);
 route("replaceCustomerPermissions", Patch, "admin/customer-permissions", [SessionAuthGuard, AdminOnlyGuard, CsrfGuard], [[Body, 0], [Res, 1]]);
 route("assignManager", Patch, "admin/products/:id/manager", [SessionAuthGuard, AdminOnlyGuard, CsrfGuard], [[Param, 0], [Body, 1], [Res, 2]]);
+route("adminImportPreview", Post, "admin/products/import/preview", [SessionAuthGuard, AdminOnlyGuard, CsrfGuard], [[require("@nestjs/common").Req, 0], [Res, 1]]);
+route("adminImport", Post, "admin/products/import", [SessionAuthGuard, AdminOnlyGuard, CsrfGuard], [[require("@nestjs/common").Req, 0], [Res, 1]]);
 route("managerProducts", Get, "manager/products", [SessionAuthGuard, ManagerOnlyGuard], [[require("@nestjs/common").Req, 0], [Query, 1], [Res, 2]]);
 route("managerProductDetails", Get, "manager/products/:id", [SessionAuthGuard, ManagerOnlyGuard], [[require("@nestjs/common").Req, 0], [Param, 1], [Res, 2]]);
 route("managerAccess", Get, "manager/access", [SessionAuthGuard, ManagerOnlyGuard], [[require("@nestjs/common").Req, 0], [Res, 1]]);
@@ -569,6 +864,8 @@ route("managerInventoryAlerts", Get, "manager/inventory/alerts", [SessionAuthGua
 route("managerStockHistory", Get, "manager/inventory/history", [SessionAuthGuard, ManagerOnlyGuard], [[require("@nestjs/common").Req, 0], [Query, 1], [Res, 2]]);
 route("managerInventoryReport", Get, "manager/inventory/reports", [SessionAuthGuard, ManagerOnlyGuard], [[require("@nestjs/common").Req, 0], [Query, 1], [Res, 2]]);
 route("exportManagerInventoryReport", Get, "manager/inventory/reports/export", [SessionAuthGuard, ManagerOnlyGuard], [[require("@nestjs/common").Req, 0], [Query, 1], [Res, 2]]);
+route("managerImportPreview", Post, "manager/products/import/preview", [SessionAuthGuard, ManagerOnlyGuard, CsrfGuard], [[require("@nestjs/common").Req, 0], [Res, 1]]);
+route("managerImport", Post, "manager/products/import", [SessionAuthGuard, ManagerOnlyGuard, CsrfGuard], [[require("@nestjs/common").Req, 0], [Res, 1]]);
 route("createManagerProduct", Post, "manager/products", [SessionAuthGuard, ManagerOnlyGuard, CsrfGuard], [[require("@nestjs/common").Req, 0], [Body, 1], [Res, 2]]);
 route("editManagerProduct", Put, "manager/products/:id", [SessionAuthGuard, ManagerOnlyGuard, CsrfGuard], [[require("@nestjs/common").Req, 0], [Param, 1], [Body, 2], [Res, 3]]);
 route("removeManagerProduct", Delete, "manager/products/:id", [SessionAuthGuard, ManagerOnlyGuard, CsrfGuard], [[require("@nestjs/common").Req, 0], [Param, 1], [Res, 2]]);

@@ -1056,5 +1056,6 @@ module.exports = {
   INVENTORY_MANAGER_PERMISSIONS,
   ProductService,
   productView,
-  validateProductInput
+  validateProductInput,
+  PRODUCT_FIELDS
 };

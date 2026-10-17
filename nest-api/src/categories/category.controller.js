@@ -11,6 +11,7 @@ const {
   Param,
   Patch,
   Post,
+  Query,
   Req,
   Res,
   UseGuards
@@ -151,32 +152,13 @@ class ManagerCategoryController {
     return rows.map(({ permission }) => permission);
   }
 
-  async list(request, response) {
+  async list(request, query, response) {
     const permissions = await this.permissions(request);
     if (!permissions.includes("VIEW_CATEGORIES") && !permissions.includes("MANAGE_CATEGORIES")) {
       throw new ForbiddenException("You do not have permission to view categories.");
     }
-    const [products, saved] = await Promise.all([
-      this.prisma.product.findMany({
-        where: { managerId: request.user.id },
-        select: { category: true }
-      }),
-      this.prisma.category.findMany({ orderBy: { name: "asc" } })
-    ]);
-    const names = [...new Set(products.map(({ category }) => category).filter(Boolean))];
-    const categoryByName = new Map(saved.map((category) => [category.name, category]));
-    const counts = new Map();
-    for (const { category } of products) counts.set(category, (counts.get(category) || 0) + 1);
-    for (const name of names) {
-      if (!categoryByName.has(name)) {
-        categoryByName.set(name, { id: null, name, slug: null, description: null });
-      }
-    }
-    const data = [...categoryByName.values()].map((category) => ({
-      ...category,
-      productCount: counts.get(category.name) || 0
-    })).sort((left, right) => left.name.localeCompare(right.name));
-    response.status(200).json({ data });
+    const result = await this.categories.list(query);
+    response.status(200).json(result);
   }
 
   async create(request, body, response) {
