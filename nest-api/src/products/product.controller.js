@@ -17,9 +17,17 @@ const {
   UseGuards
 } = require("@nestjs/common");
 const multer = require("multer");
+const {
+  detectDuplicates,
+  generateDuplicateSummary,
+  generateComparisonKey,
+  generateSlugComparisonKey,
+  toProductSlug,
+  normalizeSku,
+  normalizeForComparison
+} = require("../products/product-duplicate-detector");
 const { parseImportFile } = require("../utils/file-parser");
-const { validateImportRows } = require("../products/product-import-validator");
-const { detectDuplicates, generateDuplicateSummary } = require("../products/product-duplicate-detector");
+const { validateImportRows } = require("./product-import-validator");
 
 // Configure multer for memory storage (preview-only, no disk write)
 const upload = multer({
@@ -49,7 +57,7 @@ const upload = multer({
 const { AuthModule } = require("../auth/auth.module");
 const { AdminRoleGuard } = require("../categories/category.controller");
 const { CsrfGuard, SessionAuthGuard } = require("../auth/auth-security");
-const { ProductService } = require("./product.service");
+const { ProductService, validateProductInput } = require("./product.service");
 
 const LEGACY_MANAGER_PERMISSIONS = [
   "VIEW_INVENTORY_DASHBOARD",
@@ -111,6 +119,323 @@ function roleGuard(role) {
       }
       return true;
     }
+  };
+}
+
+async function executeProductImport({
+  productsToImport,
+  prisma,
+  managerId = null,
+  validateProductInputFn = validateProductInput
+}) {
+  const results = {
+    total: productsToImport.length,
+    successful: 0,
+    failed: 0,
+    skipped: 0,
+    errors: []
+  };
+
+  if (!productsToImport || productsToImport.length === 0) {
+    return {
+      success: true,
+      status: "success",
+      results
+    };
+  }
+
+  // Pre-fetch candidate products from the database for fast and safe duplicate detection
+  const uniqueNames = new Set();
+  const uniqueCategories = new Set();
+  for (const item of productsToImport) {
+    const name = item?.name || item?.rawData?.name;
+    const cat = item?.category || item?.rawData?.category;
+    if (typeof name === "string" && name.trim()) {
+      uniqueNames.add(name);
+      uniqueNames.add(name.trim());
+    }
+    if (typeof cat === "string" && cat.trim()) {
+      uniqueCategories.add(cat);
+      uniqueCategories.add(cat.trim());
+    }
+  }
+
+  const existingProductMap = new Map();
+  const existingProductSlugMap = new Map();
+
+  if ((uniqueNames.size > 0 || uniqueCategories.size > 0) && typeof prisma?.product?.findMany === "function") {
+    const whereConditions = [];
+    if (uniqueNames.size > 0) {
+      whereConditions.push(...Array.from(uniqueNames).map((name) => ({ name })));
+    }
+    if (uniqueCategories.size > 0) {
+      whereConditions.push(...Array.from(uniqueCategories).map((category) => ({ category })));
+    }
+
+    try {
+      const dbProducts = await prisma.product.findMany({
+        where: {
+          OR: whereConditions
+        },
+        select: {
+          id: true,
+          name: true,
+          category: true,
+          managerId: true
+        }
+      });
+
+      for (const prod of dbProducts) {
+        const compKey = generateComparisonKey(prod.name, prod.category);
+        existingProductMap.set(compKey, prod);
+        const slugKey = generateSlugComparisonKey(prod.name, prod.category);
+        if (slugKey) {
+          existingProductSlugMap.set(slugKey, prod);
+        }
+      }
+    } catch {
+      // In case findMany is not supported in a mock, fallback gracefully
+    }
+  }
+
+  // In-batch duplicate tracking sets/maps
+  const seenKeysInBatch = new Map();
+  const seenSlugKeysInBatch = new Map();
+  const seenSkusInBatch = new Map();
+
+  for (let i = 0; i < productsToImport.length; i++) {
+    const productData = productsToImport[i];
+    const rowNumber = productData?.rowNumber !== undefined ? productData.rowNumber : i + 1;
+    const rawSku = productData?.sku !== undefined && productData?.sku !== null && productData?.sku !== ""
+      ? productData.sku
+      : null;
+    const productSku = rawSku !== null ? String(rawSku).trim() : null;
+    const identifier = productSku || productData?.name || `Row ${rowNumber}`;
+
+    try {
+      if (!productData || typeof productData !== "object" || Array.isArray(productData)) {
+        throw new BadRequestException("Invalid product row data.");
+      }
+
+      // Check if this row had pre-existing validation errors (e.g. from file parser)
+      if (Array.isArray(productData._validationErrors) && productData._validationErrors.length > 0) {
+        const errorMsg = productData._validationErrors.join("; ");
+        results.failed++;
+        results.errors.push({
+          row: rowNumber,
+          sku: productSku,
+          identifier,
+          field: "row",
+          error: errorMsg,
+          type: "validation"
+        });
+        continue;
+      }
+
+      // Validate SKU if provided
+      if (rawSku !== null) {
+        if (typeof rawSku !== "string" && typeof rawSku !== "number") {
+          throw new BadRequestException("SKU must be text.");
+        }
+        if (productSku.length > 100) {
+          throw new BadRequestException("SKU exceeds maximum length of 100 characters.");
+        }
+      }
+
+      // Validate stock quantity if provided
+      let parsedStock = null;
+      if (productData.stockQuantity !== undefined && productData.stockQuantity !== null && productData.stockQuantity !== "") {
+        parsedStock = Number(productData.stockQuantity);
+        if (!Number.isFinite(parsedStock) || !Number.isSafeInteger(parsedStock) || parsedStock < 0 || parsedStock > 2147483647) {
+          throw new BadRequestException("Stock quantity must be a non-negative whole number.");
+        }
+      }
+
+      // Validate low stock threshold if provided
+      let parsedThreshold = null;
+      if (productData.lowStockThreshold !== undefined && productData.lowStockThreshold !== null && productData.lowStockThreshold !== "") {
+        parsedThreshold = Number(productData.lowStockThreshold);
+        if (!Number.isFinite(parsedThreshold) || !Number.isSafeInteger(parsedThreshold) || parsedThreshold < 0 || parsedThreshold > 2147483647) {
+          throw new BadRequestException("Low stock threshold must be a non-negative whole number.");
+        }
+      }
+
+      // Extract core fields supported by product service
+      const allowedCoreFields = managerId !== null
+        ? ["name", "category", "price", "description", "imageUrl", "imagePublicId"]
+        : ["name", "category", "price", "description", "imageUrl", "imagePublicId", "inStock", "managerId"];
+
+      const coreData = {};
+      for (const field of allowedCoreFields) {
+        if (Object.hasOwn(productData, field)) {
+          coreData[field] = productData[field];
+        }
+      }
+
+      // Validate the product data using ProductService validation
+      const validated = typeof validateProductInputFn === "function"
+        ? validateProductInputFn(coreData)
+        : validateProductInput(coreData);
+
+      // Normalization comparison keys
+      const compKey = generateComparisonKey(validated.name, validated.category);
+      const slugKey = generateSlugComparisonKey(validated.name, validated.category);
+      const skuKey = normalizeSku(productSku);
+
+      // 1. In-file duplicate check: Exact normalized name + category
+      if (seenKeysInBatch.has(compKey)) {
+        const firstOccur = seenKeysInBatch.get(compKey);
+        results.skipped++;
+        results.errors.push({
+          row: rowNumber,
+          sku: productSku,
+          identifier,
+          field: "name",
+          error: `Duplicate of row ${firstOccur.rowNumber} (same name and category: "${validated.name}")`,
+          type: "duplicate"
+        });
+        continue;
+      }
+
+      // 2. In-file duplicate check: Canonical slug + category
+      if (slugKey && seenSlugKeysInBatch.has(slugKey)) {
+        const firstOccur = seenSlugKeysInBatch.get(slugKey);
+        results.skipped++;
+        results.errors.push({
+          row: rowNumber,
+          sku: productSku,
+          identifier,
+          field: "name",
+          error: `Duplicate of row ${firstOccur.rowNumber} (same product slug/name: "${validated.name}")`,
+          type: "duplicate"
+        });
+        continue;
+      }
+
+      // 3. In-file duplicate check: Duplicate SKU within uploaded file
+      if (skuKey && seenSkusInBatch.has(skuKey)) {
+        const firstOccur = seenSkusInBatch.get(skuKey);
+        results.skipped++;
+        results.errors.push({
+          row: rowNumber,
+          sku: productSku,
+          identifier,
+          field: "sku",
+          error: `Duplicate of row ${firstOccur.rowNumber} (same SKU: "${productSku}")`,
+          type: "duplicate"
+        });
+        continue;
+      }
+
+      // 4. Database duplicate check: Match from pre-fetched candidates (name, slug, case, whitespace)
+      let existingInDb = existingProductMap.get(compKey) || (slugKey ? existingProductSlugMap.get(slugKey) : null);
+
+      // Fallback direct DB check if not found in prefetch
+      if (!existingInDb && typeof prisma?.product?.findFirst === "function") {
+        existingInDb = await prisma.product.findFirst({
+          where: {
+            name: validated.name,
+            category: validated.category
+          },
+          select: { id: true, name: true, category: true }
+        });
+      }
+
+      if (existingInDb) {
+        results.skipped++;
+        results.errors.push({
+          row: rowNumber,
+          sku: productSku,
+          identifier,
+          field: "name",
+          error: `Product "${validated.name}" in category "${validated.category}" already exists (ID: ${existingInDb.id})`,
+          type: "duplicate"
+        });
+        continue;
+      }
+
+      // 5. Create product in database
+      const createData = {
+        ...validated,
+        ...(managerId !== null ? { managerId: Number(managerId) } : {}),
+        ...(parsedStock !== null ? { stockQuantity: parsedStock } : {}),
+        ...(parsedThreshold !== null ? { lowStockThreshold: parsedThreshold } : {}),
+        inStock: parsedStock !== null ? parsedStock > 0 : (managerId !== null ? true : (validated.inStock ?? true)),
+        updatedAt: new Date()
+      };
+
+      try {
+        const created = await prisma.product.create({
+          data: createData
+        });
+
+        // Register in seen maps for subsequent in-batch rows
+        seenKeysInBatch.set(compKey, { rowNumber, name: validated.name, category: validated.category, sku: productSku });
+        if (slugKey) seenSlugKeysInBatch.set(slugKey, { rowNumber, name: validated.name, category: validated.category, sku: productSku });
+        if (skuKey) seenSkusInBatch.set(skuKey, { rowNumber, name: validated.name, category: validated.category, sku: productSku });
+
+        existingProductMap.set(compKey, created);
+        if (slugKey) existingProductSlugMap.set(slugKey, created);
+
+        results.successful++;
+      } catch (dbError) {
+        if (
+          dbError?.code === "P2002" ||
+          dbError?.message?.includes("Unique constraint") ||
+          dbError?.message?.includes("Duplicate entry") ||
+          dbError?.message?.includes("duplicate key")
+        ) {
+          results.skipped++;
+          results.errors.push({
+            row: rowNumber,
+            sku: productSku,
+            identifier,
+            field: "name",
+            error: `Product "${validated.name}" in category "${validated.category}" already exists (unique constraint conflict)`,
+            type: "duplicate"
+          });
+        } else {
+          throw dbError;
+        }
+      }
+    } catch (error) {
+      results.failed++;
+      let fieldName = "row";
+      const msg = error.message || "Failed to import product";
+      if (/image/i.test(msg)) fieldName = "imageUrl";
+      else if (/\bname\b/i.test(msg)) fieldName = "name";
+      else if (/price/i.test(msg)) fieldName = "price";
+      else if (/category/i.test(msg)) fieldName = "category";
+      else if (/stock/i.test(msg)) fieldName = "stockQuantity";
+      else if (/threshold/i.test(msg)) fieldName = "lowStockThreshold";
+      else if (/sku/i.test(msg)) fieldName = "sku";
+
+      results.errors.push({
+        row: rowNumber,
+        sku: productSku,
+        identifier,
+        field: fieldName,
+        error: msg,
+        type: "validation"
+      });
+    }
+  }
+
+  let status = "success";
+  if (results.total > 0) {
+    if (results.successful === 0) {
+      status = "failure";
+    } else if (results.skipped > 0 || results.failed > 0) {
+      status = "partial_success";
+    } else {
+      status = "success";
+    }
+  }
+
+  return {
+    success: results.successful > 0 || results.total === 0,
+    status,
+    results
   };
 }
 
@@ -613,69 +938,93 @@ class ProductController {
   }
 
   async adminImport(request, response) {
-    if (!request.body || !Array.isArray(request.body.products)) {
-      throw new BadRequestException("Import data must include a products array.");
-    }
+    let productsToImport = [];
 
-    const productsToImport = request.body.products;
-    const results = {
-      total: productsToImport.length,
-      successful: 0,
-      failed: 0,
-      skipped: 0,
-      errors: []
-    };
-
-    for (const productData of productsToImport) {
-      const rowNumber = productData.rowNumber;
-      
-      // Remove rowNumber before validation as it's not a product field
-      const { rowNumber: _, ...dataToValidate } = productData;
-      
-      try {
-        // Validate the product data using the service's validation
-        const validated = this.products.validateProductInput(dataToValidate);
-
-        // Check if it's a duplicate (name + category)
-        const existing = await this.products.prisma.product.findFirst({
-          where: {
-            name: validated.name,
-            category: validated.category
-          }
-        });
-
-        if (existing) {
-          results.skipped++;
-          results.errors.push({
-            row: rowNumber,
-            error: `Product "${validated.name}" in category "${validated.category}" already exists (ID: ${existing.id})`
-          });
-          continue;
-        }
-
-        // Create the product
-        await this.products.prisma.product.create({
-          data: {
-            ...validated,
-            inStock: true,
-            updatedAt: new Date()
-          }
-        });
-
-        results.successful++;
-      } catch (error) {
-        results.failed++;
-        results.errors.push({
-          row: rowNumber,
-          error: error.message || "Failed to import product"
-        });
+    if (request.file) {
+      const fileBuffer = request.file.buffer;
+      const filename = request.file.originalname;
+      const mimeType = request.file.mimetype;
+      const parsedData = parseImportFile(fileBuffer, filename, mimeType);
+      const validationResult = validateImportRows(parsedData);
+      if (!validationResult.headerValidation.valid) {
+        throw new BadRequestException(
+          `Missing required headers: ${validationResult.headerValidation.missingRequired.join(", ")}`
+        );
       }
+      productsToImport = validationResult.rowResults.map((r) => {
+        if (r.status === "invalid") {
+          return {
+            rowNumber: r.rowNumber,
+            _validationErrors: r.errors,
+            ...(r.data || r.rawData || {})
+          };
+        }
+        return {
+          rowNumber: r.rowNumber,
+          ...r.data
+        };
+      });
+    } else if (request.body && Array.isArray(request.body.products)) {
+      productsToImport = request.body.products;
+    } else {
+      throw new BadRequestException("Import data must include a products array or uploaded file.");
     }
 
-    response.status(200).json({
-      success: true,
-      results
+    const validateFn = typeof this.products?.validateProductInput === "function"
+      ? this.products.validateProductInput.bind(this.products)
+      : validateProductInput;
+
+    const importResult = await executeProductImport({
+      productsToImport,
+      prisma: this.products.prisma,
+      managerId: null,
+      validateProductInputFn: validateFn
     });
+
+    response.status(200).json(importResult);
+  }
+
+  async importTemplate(query, response) {
+    const format = (query?.format || "csv").toLowerCase();
+    const headers = [
+      "Product Name",
+      "Category",
+      "Price",
+      "Description",
+      "Image URL",
+      "Stock Quantity",
+      "Low Stock Threshold"
+    ];
+    const sampleRows = [
+      ["Wireless Noise-Canceling Headphones", "Electronics", 12999.00, "Premium over-ear headphones with active noise cancellation and 30-hour battery life.", "https://images.unsplash.com/photo-1505740420928-5e560c06d30e", 45, 10],
+      ["Organic Cotton Classic Tee", "Apparel", 999.00, "Breathable 100% organic cotton t-shirt with reinforced stitching.", "https://images.unsplash.com/photo-1521572267360-ee0c2909d518", 120, 25],
+      ["Stainless Steel Water Bottle", "Fitness", 749.50, "Double-walled vacuum insulated 750ml flask keeping drinks cold for 24 hours.", "https://images.unsplash.com/photo-1602143407151-7111542de6e8", 80, 15],
+      ["Ceramic Pour-Over Coffee Dripper", "Kitchen", 1499.00, "Handcrafted ceramic dripper for artisanal pour-over brewing.", "https://images.unsplash.com/photo-1514432324607-a09d9b4aefdd", 30, 5],
+      ["Minimalist Desk Organizer", "Office", 899.00, "Compact bamboo desk organizer with phone stand and cable management.", "", 50, 10]
+    ];
+
+    if (format === "xlsx" || format === "xls") {
+      const xlsx = require("xlsx");
+      const wb = xlsx.utils.book_new();
+      const ws = xlsx.utils.aoa_to_sheet([headers, ...sampleRows]);
+      xlsx.utils.book_append_sheet(wb, ws, "Products");
+      const buffer = xlsx.write(wb, { type: "buffer", bookType: "xlsx" });
+      response.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+      response.setHeader("Content-Disposition", 'attachment; filename="shopsphere-product-template.xlsx"');
+      return response.status(200).send(buffer);
+    }
+
+    const csv = "\uFEFF" + [
+      headers.join(","),
+      ...sampleRows.map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(","))
+    ].join("\n");
+    response.setHeader("Content-Type", "text/csv; charset=utf-8");
+    response.setHeader("Content-Disposition", 'attachment; filename="shopsphere-product-template.csv"');
+    return response.status(200).send(csv);
+  }
+
+  async managerImportTemplate(query, response) {
+    return this.importTemplate(query, response);
   }
 
   async managerImport(request, response) {
@@ -684,83 +1033,51 @@ class ProductController {
       throw new ForbiddenException("You do not have permission to import products.");
     }
 
-    if (!request.body || !Array.isArray(request.body.products)) {
-      throw new BadRequestException("Import data must include a products array.");
-    }
+    let productsToImport = [];
 
-    const productsToImport = request.body.products;
-    const managerId = request.user.id;
-    const results = {
-      total: productsToImport.length,
-      successful: 0,
-      failed: 0,
-      skipped: 0,
-      errors: []
-    };
-
-    for (const productData of productsToImport) {
-      const rowNumber = productData.rowNumber;
-      
-      // Remove rowNumber before validation as it's not a product field
-      const { rowNumber: _, ...dataToValidate } = productData;
-      
-      try {
-        // Validate the product data (manager can only set specific fields)
-        const allowedFields = ["name", "category", "price", "description", "imageUrl", "imagePublicId"];
-        const managerData = {};
-        for (const field of allowedFields) {
-          if (Object.hasOwn(dataToValidate, field)) {
-            managerData[field] = dataToValidate[field];
-          }
-        }
-
-        const validated = this.products.validateProductInput(managerData);
-
-        // Check if it's a duplicate within manager's scope (name + category)
-        const existing = await this.products.prisma.product.findFirst({
-          where: {
-            name: validated.name,
-            category: validated.category,
-            OR: [
-              { managerId: Number(managerId) },
-              { managerId: null }
-            ]
-          }
-        });
-
-        if (existing) {
-          results.skipped++;
-          results.errors.push({
-            row: rowNumber,
-            error: `Product "${validated.name}" in category "${validated.category}" already exists (ID: ${existing.id})`
-          });
-          continue;
-        }
-
-        // Create the product with manager assignment
-        await this.products.prisma.product.create({
-          data: {
-            ...validated,
-            inStock: true,
-            managerId: Number(managerId),
-            updatedAt: new Date()
-          }
-        });
-
-        results.successful++;
-      } catch (error) {
-        results.failed++;
-        results.errors.push({
-          row: rowNumber,
-          error: error.message || "Failed to import product"
-        });
+    if (request.file) {
+      const fileBuffer = request.file.buffer;
+      const filename = request.file.originalname;
+      const mimeType = request.file.mimetype;
+      const parsedData = parseImportFile(fileBuffer, filename, mimeType);
+      const validationResult = validateImportRows(parsedData);
+      if (!validationResult.headerValidation.valid) {
+        throw new BadRequestException(
+          `Missing required headers: ${validationResult.headerValidation.missingRequired.join(", ")}`
+        );
       }
+      productsToImport = validationResult.rowResults.map((r) => {
+        if (r.status === "invalid") {
+          return {
+            rowNumber: r.rowNumber,
+            _validationErrors: r.errors,
+            ...(r.data || r.rawData || {})
+          };
+        }
+        return {
+          rowNumber: r.rowNumber,
+          ...r.data
+        };
+      });
+    } else if (request.body && Array.isArray(request.body.products)) {
+      productsToImport = request.body.products;
+    } else {
+      throw new BadRequestException("Import data must include a products array or uploaded file.");
     }
 
-    response.status(200).json({
-      success: true,
-      results
+    const managerId = request.user.id;
+    const validateFn = typeof this.products?.validateProductInput === "function"
+      ? this.products.validateProductInput.bind(this.products)
+      : validateProductInput;
+
+    const importResult = await executeProductImport({
+      productsToImport,
+      prisma: this.products.prisma,
+      managerId,
+      validateProductInputFn: validateFn
     });
+
+    response.status(200).json(importResult);
   }
 
   async updateInventory(request, id, body, response) {
@@ -856,6 +1173,7 @@ route("replaceCustomerPermissions", Patch, "admin/customer-permissions", [Sessio
 route("assignManager", Patch, "admin/products/:id/manager", [SessionAuthGuard, AdminOnlyGuard, CsrfGuard], [[Param, 0], [Body, 1], [Res, 2]]);
 route("adminImportPreview", Post, "admin/products/import/preview", [SessionAuthGuard, AdminOnlyGuard, CsrfGuard], [[require("@nestjs/common").Req, 0], [Res, 1]]);
 route("adminImport", Post, "admin/products/import", [SessionAuthGuard, AdminOnlyGuard, CsrfGuard], [[require("@nestjs/common").Req, 0], [Res, 1]]);
+route("importTemplate", Get, "admin/products/import/template", [SessionAuthGuard, AdminOnlyGuard], [[Query, 0], [Res, 1]]);
 route("managerProducts", Get, "manager/products", [SessionAuthGuard, ManagerOnlyGuard], [[require("@nestjs/common").Req, 0], [Query, 1], [Res, 2]]);
 route("managerProductDetails", Get, "manager/products/:id", [SessionAuthGuard, ManagerOnlyGuard], [[require("@nestjs/common").Req, 0], [Param, 1], [Res, 2]]);
 route("managerAccess", Get, "manager/access", [SessionAuthGuard, ManagerOnlyGuard], [[require("@nestjs/common").Req, 0], [Res, 1]]);
@@ -866,6 +1184,7 @@ route("managerInventoryReport", Get, "manager/inventory/reports", [SessionAuthGu
 route("exportManagerInventoryReport", Get, "manager/inventory/reports/export", [SessionAuthGuard, ManagerOnlyGuard], [[require("@nestjs/common").Req, 0], [Query, 1], [Res, 2]]);
 route("managerImportPreview", Post, "manager/products/import/preview", [SessionAuthGuard, ManagerOnlyGuard, CsrfGuard], [[require("@nestjs/common").Req, 0], [Res, 1]]);
 route("managerImport", Post, "manager/products/import", [SessionAuthGuard, ManagerOnlyGuard, CsrfGuard], [[require("@nestjs/common").Req, 0], [Res, 1]]);
+route("managerImportTemplate", Get, "manager/products/import/template", [SessionAuthGuard, ManagerOnlyGuard], [[Query, 0], [Res, 1]]);
 route("createManagerProduct", Post, "manager/products", [SessionAuthGuard, ManagerOnlyGuard, CsrfGuard], [[require("@nestjs/common").Req, 0], [Body, 1], [Res, 2]]);
 route("editManagerProduct", Put, "manager/products/:id", [SessionAuthGuard, ManagerOnlyGuard, CsrfGuard], [[require("@nestjs/common").Req, 0], [Param, 1], [Body, 2], [Res, 3]]);
 route("removeManagerProduct", Delete, "manager/products/:id", [SessionAuthGuard, ManagerOnlyGuard, CsrfGuard], [[require("@nestjs/common").Req, 0], [Param, 1], [Res, 2]]);

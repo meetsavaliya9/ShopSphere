@@ -16,6 +16,8 @@ class AllExceptionsFilter {
     let statusCode = 500;
     let message = "Internal server error";
 
+    if (response.headersSent) return;
+
     if (exception instanceof HttpException) {
       statusCode = exception.getStatus();
       const body = exception.getResponse();
@@ -24,6 +26,26 @@ class AllExceptionsFilter {
       if (statusCode === 404 && /^Cannot (GET|POST|PUT|PATCH|DELETE|OPTIONS|HEAD) /.test(message)) {
         message = "Route not found";
       }
+    } else if (
+      exception?.status === 413 ||
+      exception?.statusCode === 413 ||
+      exception?.name === "PayloadTooLargeError" ||
+      exception?.type === "entity.too.large" ||
+      exception?.code === "LIMIT_FILE_SIZE"
+    ) {
+      statusCode = 413;
+      message = exception.code === "LIMIT_FILE_SIZE"
+        ? "File size exceeds 5MB limit. Please upload a smaller file."
+        : "Request payload exceeds allowed limit";
+    } else if (exception?.name === "MulterError") {
+      statusCode = 400;
+      message = exception.message || "File upload error";
+    } else if (typeof exception?.status === "number" && exception.status >= 400 && exception.status < 500) {
+      statusCode = exception.status;
+      message = exception.message || "Bad Request";
+    } else if (typeof exception?.statusCode === "number" && exception.statusCode >= 400 && exception.statusCode < 500) {
+      statusCode = exception.statusCode;
+      message = exception.message || "Bad Request";
     } else {
       console.error("Unhandled NestJS API error:", {
         name: exception.name || "Error",

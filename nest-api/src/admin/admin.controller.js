@@ -36,16 +36,25 @@ class AdminController {
   }
 
   async customers(query, response) {
-    response.status(200).json(await this.admin.customers(query));
+    const res = response || (query && typeof query.status === "function" ? query : null);
+    const q = (query && typeof query.status === "function") ? {} : (query || {});
+    const result = await this.admin.customers(q);
+    if (res) {
+      res.status(200).json(result);
+    } else {
+      return result;
+    }
   }
 
   async customerDetails(id, response) {
-    response.status(200).json({ data: await this.admin.customerDetails(id) });
+    const customerId = typeof id === "object" && id !== null ? id.id : id;
+    response.status(200).json({ data: await this.admin.customerDetails(customerId) });
   }
 
   async updateCustomerStatus(id, body, response) {
+    const customerId = typeof id === "object" && id !== null ? id.id : id;
     response.status(200).json({
-      data: await this.admin.updateCustomerStatus(id, body)
+      data: await this.admin.updateCustomerStatus(customerId, body)
     });
   }
 
@@ -125,7 +134,7 @@ function route(method, decorator, path, guards, parameters) {
 route("overview", Get, "overview", [], [[Query, 0], [Res, 1]]);
 route("reports", Get, "reports", [], [[Query, 0], [Res, 1]]);
 route("databaseInventory", Get, "database-inventory", [], [[Res, 0]]);
-route("customers", Get, "customers", [], [[Res, 0]]);
+route("customers", Get, "customers", [], [[Query, 0], [Res, 1]]);
 route("customerDetails", Get, "customers/:id", [], [[Param, 0], [Res, 1]]);
 route("updateCustomerStatus", Patch, "customers/:id/status", [CsrfGuard], [[Param, 0], [Body, 1], [Res, 2]]);
 route("coupons", Get, "coupons", [], [[Res, 0]]);

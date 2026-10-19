@@ -71,6 +71,19 @@ function productView(product, { includeInventory = false, includeAvailability = 
   };
 }
 
+const ALLOWED_IMAGE_HOSTS = Object.freeze(new Set(["images.unsplash.com", "res.cloudinary.com"]));
+
+function isValidImageUrl(urlStr) {
+  if (!urlStr || typeof urlStr !== "string") return false;
+  try {
+    const parsed = new URL(urlStr.trim());
+    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return false;
+    return ALLOWED_IMAGE_HOSTS.has(parsed.hostname.toLowerCase());
+  } catch {
+    return false;
+  }
+}
+
 function validateProductInput(input, partial = false) {
   if (!input || typeof input !== "object" || Array.isArray(input)) {
     throw new BadRequestException("A product object is required.");
@@ -124,13 +137,15 @@ function validateProductInput(input, partial = false) {
     data.description = "";
   }
   if (Object.hasOwn(input, "imageUrl")) {
-    if (
-      input.imageUrl !== null &&
-      (typeof input.imageUrl !== "string" || input.imageUrl.length > 2048)
-    ) {
+    if (input.imageUrl === null || input.imageUrl === undefined || input.imageUrl === "") {
+      data.imageUrl = null;
+    } else if (typeof input.imageUrl !== "string" || input.imageUrl.length > 2048) {
       throw new BadRequestException("Product image URL is invalid.");
+    } else if (!isValidImageUrl(input.imageUrl)) {
+      throw new BadRequestException("Product image URL hostname is not configured (allowed: images.unsplash.com, res.cloudinary.com).");
+    } else {
+      data.imageUrl = input.imageUrl.trim();
     }
-    data.imageUrl = input.imageUrl || null;
   }
   if (Object.hasOwn(input, "imagePublicId")) {
     if (
@@ -475,6 +490,14 @@ class ProductService {
     });
     if (!product) throw new NotFoundException("Assigned product not found.");
     return productView(product, { includeInventory: true });
+  }
+
+  validateProductInput(input, partial = false) {
+    return validateProductInput(input, partial);
+  }
+
+  static validateProductInput(input, partial = false) {
+    return validateProductInput(input, partial);
   }
 
   async create(input) {
@@ -1057,5 +1080,7 @@ module.exports = {
   ProductService,
   productView,
   validateProductInput,
-  PRODUCT_FIELDS
+  PRODUCT_FIELDS,
+  ALLOWED_IMAGE_HOSTS,
+  isValidImageUrl
 };

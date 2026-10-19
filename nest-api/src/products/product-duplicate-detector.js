@@ -9,14 +9,39 @@ function normalizeForComparison(value) {
   return value.trim().toLowerCase();
 }
 
+function toProductSlug(name) {
+  if (typeof name !== "string") return "";
+  return name
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
 function generateComparisonKey(name, category) {
   const normalizedName = normalizeForComparison(name);
   const normalizedCategory = normalizeForComparison(category);
   return `${normalizedName}|${normalizedCategory}`;
 }
 
+function generateSlugComparisonKey(name, category) {
+  const slug = toProductSlug(name);
+  const normalizedCategory = normalizeForComparison(category);
+  return `${slug}|${normalizedCategory}`;
+}
+
+function normalizeSku(sku) {
+  if (sku === undefined || sku === null || sku === "") return null;
+  const str = String(sku).trim().toLowerCase();
+  return str || null;
+}
+
 function detectFileDuplicates(validationResults) {
   const seenKeys = new Map();
+  const seenSlugKeys = new Map();
+  const seenSkus = new Map();
   const processedResults = [];
 
   for (const result of validationResults) {
@@ -26,11 +51,13 @@ function detectFileDuplicates(validationResults) {
       continue;
     }
 
-    const data = result.data;
+    const data = result.data || {};
     const comparisonKey = generateComparisonKey(data.name, data.category);
+    const slugKey = generateSlugComparisonKey(data.name, data.category);
+    const skuKey = normalizeSku(data.sku);
 
     if (seenKeys.has(comparisonKey)) {
-      // Duplicate within file
+      // Duplicate within file by exact normalized name and category
       const firstOccurrence = seenKeys.get(comparisonKey);
       processedResults.push({
         ...result,
@@ -39,8 +66,30 @@ function detectFileDuplicates(validationResults) {
         duplicateReason: `Duplicate of row ${firstOccurrence.rowNumber} (same name and category)`,
         existingProductId: null
       });
+    } else if (slugKey && seenSlugKeys.has(slugKey)) {
+      // Duplicate within file by canonical slug and category
+      const firstOccurrence = seenSlugKeys.get(slugKey);
+      processedResults.push({
+        ...result,
+        status: "duplicate",
+        duplicateSource: "uploaded_file",
+        duplicateReason: `Duplicate of row ${firstOccurrence.rowNumber} (same product slug/name)`,
+        existingProductId: null
+      });
+    } else if (skuKey && seenSkus.has(skuKey)) {
+      // Duplicate within file by SKU
+      const firstOccurrence = seenSkus.get(skuKey);
+      processedResults.push({
+        ...result,
+        status: "duplicate",
+        duplicateSource: "uploaded_file",
+        duplicateReason: `Duplicate of row ${firstOccurrence.rowNumber} (same SKU: ${String(data.sku).trim()})`,
+        existingProductId: null
+      });
     } else {
       seenKeys.set(comparisonKey, result);
+      if (slugKey) seenSlugKeys.set(slugKey, result);
+      if (skuKey) seenSkus.set(skuKey, result);
       processedResults.push(result);
     }
   }
@@ -56,23 +105,23 @@ async function detectDatabaseDuplicates(validationResults, prisma, managerId = n
     return validationResults;
   }
 
-  // Build list of unique comparison keys from valid rows
-  const comparisonKeys = new Set();
-  const keyToRowMap = new Map();
-  
-  for (const row of validRows) {
-    const key = generateComparisonKey(row.data.name, row.data.category);
-    comparisonKeys.add(key);
-    keyToRowMap.set(key, row);
-  }
-
   // Extract unique names and categories for efficient database query
   const uniqueNames = new Set();
   const uniqueCategories = new Set();
   
   for (const row of validRows) {
-    uniqueNames.add(row.data.name);
-    uniqueCategories.add(row.data.category);
+    if (row.data?.name) {
+      uniqueNames.add(row.data.name);
+      if (typeof row.data.name === "string" && row.data.name.trim() !== row.data.name) {
+        uniqueNames.add(row.data.name.trim());
+      }
+    }
+    if (row.data?.category) {
+      uniqueCategories.add(row.data.category);
+      if (typeof row.data.category === "string" && row.data.category.trim() !== row.data.category) {
+        uniqueCategories.add(row.data.category.trim());
+      }
+    }
   }
 
   // Build where clause for database query
@@ -99,11 +148,14 @@ async function detectDatabaseDuplicates(validationResults, prisma, managerId = n
     }
   });
 
-  // Build lookup map for existing products
+  // Build lookup maps for existing products
   const existingProductMap = new Map();
+  const existingProductSlugMap = new Map();
   for (const product of existingProducts) {
     const key = generateComparisonKey(product.name, product.category);
     existingProductMap.set(key, product);
+    const slugKey = generateSlugComparisonKey(product.name, product.category);
+    existingProductSlugMap.set(slugKey, product);
   }
 
   // Process results and mark database duplicates
@@ -113,7 +165,8 @@ async function detectDatabaseDuplicates(validationResults, prisma, managerId = n
     }
 
     const key = generateComparisonKey(result.data.name, result.data.category);
-    const existingProduct = existingProductMap.get(key);
+    const slugKey = generateSlugComparisonKey(result.data.name, result.data.category);
+    const existingProduct = existingProductMap.get(key) || existingProductSlugMap.get(slugKey);
 
     if (existingProduct) {
       return {
@@ -181,6 +234,9 @@ module.exports = {
   detectDatabaseDuplicates,
   generateDuplicateSummary,
   generateComparisonKey,
+  generateSlugComparisonKey,
+  toProductSlug,
+  normalizeSku,
   normalizeForComparison,
   PRODUCT_FIELDS
 };

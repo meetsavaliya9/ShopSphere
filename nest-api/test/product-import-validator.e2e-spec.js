@@ -6,7 +6,9 @@ const {
   HEADER_MAPPINGS,
   VALIDATION_RULES,
   REQUIRED_FIELDS,
-  OPTIONAL_FIELDS
+  OPTIONAL_FIELDS,
+  ALLOWED_IMAGE_HOSTS,
+  isValidImageUrl
 } = require("../src/products/product-import-validator");
 
 describe("Product import validator", () => {
@@ -415,6 +417,111 @@ describe("Product import validator", () => {
 
       expect(result.status).toBe("invalid");
       expect(result.errors).toContain("imageUrl exceeds maximum length of 2048 characters");
+    });
+
+    test("accepts valid imageUrl from configured hosts (images.unsplash.com and res.cloudinary.com)", () => {
+      const mappedFields = new Map([
+        ["name", "name"],
+        ["category", "category"],
+        ["price", "price"],
+        ["imageUrl", "imageUrl"]
+      ]);
+
+      const unsplashRow = {
+        name: "Unsplash Product",
+        category: "Electronics",
+        price: 99.99,
+        imageUrl: "https://images.unsplash.com/photo-1505740420928-5e560c06d30e"
+      };
+      const unsplashResult = validateRow(unsplashRow, 2, mappedFields);
+      expect(unsplashResult.status).toBe("valid");
+      expect(unsplashResult.data.imageUrl).toBe("https://images.unsplash.com/photo-1505740420928-5e560c06d30e");
+
+      const cloudinaryRow = {
+        name: "Cloudinary Product",
+        category: "Electronics",
+        price: 99.99,
+        imageUrl: "https://res.cloudinary.com/shopsphere/image/upload/v1234/sample.jpg"
+      };
+      const cloudinaryResult = validateRow(cloudinaryRow, 3, mappedFields);
+      expect(cloudinaryResult.status).toBe("valid");
+      expect(cloudinaryResult.data.imageUrl).toBe("https://res.cloudinary.com/shopsphere/image/upload/v1234/sample.jpg");
+    });
+
+    test("handles optional missing or empty imageUrl safely", () => {
+      const mappedFields = new Map([
+        ["name", "name"],
+        ["category", "category"],
+        ["price", "price"],
+        ["imageUrl", "imageUrl"]
+      ]);
+
+      const emptyRow = {
+        name: "Product Without Image",
+        category: "Home",
+        price: 49.99,
+        imageUrl: ""
+      };
+      const result = validateRow(emptyRow, 2, mappedFields);
+      expect(result.status).toBe("valid");
+      expect(result.data.imageUrl).toBeNull();
+      expect(result.errors).toHaveLength(0);
+
+      const nullRow = {
+        name: "Product With Null Image",
+        category: "Home",
+        price: 49.99,
+        imageUrl: null
+      };
+      const nullResult = validateRow(nullRow, 3, mappedFields);
+      expect(nullResult.status).toBe("valid");
+      expect(nullResult.data.imageUrl).toBeNull();
+    });
+
+    test("rejects unconfigured imageUrl hostname (such as example.com)", () => {
+      const mappedFields = new Map([
+        ["name", "name"],
+        ["category", "category"],
+        ["price", "price"],
+        ["imageUrl", "imageUrl"]
+      ]);
+
+      const row = {
+        name: "Notebook Pack",
+        category: "Office",
+        price: 19.99,
+        imageUrl: "https://example.com/images/notebook-pack.jpg"
+      };
+      const result = validateRow(row, 2, mappedFields);
+      expect(result.status).toBe("invalid");
+      expect(result.errors.some((err) => err.includes("hostname \"example.com\" is not configured"))).toBe(true);
+    });
+
+    test("rejects malformed or non-http imageUrl", () => {
+      const mappedFields = new Map([
+        ["name", "name"],
+        ["category", "category"],
+        ["price", "price"],
+        ["imageUrl", "imageUrl"]
+      ]);
+
+      const malformedResult = validateRow({
+        name: "Test",
+        category: "Office",
+        price: 10,
+        imageUrl: "not-a-valid-url"
+      }, 2, mappedFields);
+      expect(malformedResult.status).toBe("invalid");
+      expect(malformedResult.errors).toContain("imageUrl must be a valid URL");
+
+      const ftpResult = validateRow({
+        name: "Test",
+        category: "Office",
+        price: 10,
+        imageUrl: "ftp://images.unsplash.com/file.jpg"
+      }, 3, mappedFields);
+      expect(ftpResult.status).toBe("invalid");
+      expect(ftpResult.errors).toContain("imageUrl must use http or https protocol");
     });
 
     test("validates imagePublicId max length", () => {

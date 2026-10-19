@@ -9,7 +9,8 @@ const HEADER_MAPPINGS = Object.freeze({
   imageUrl: ["image_url", "imageurl", "image url", "image"],
   imagePublicId: ["image_public_id", "imagepublicid", "image public id"],
   stockQuantity: ["stock_quantity", "stockquantity", "stock quantity", "stock", "quantity", "inventory"],
-  lowStockThreshold: ["low_stock_threshold", "lowstockthreshold", "low stock threshold", "threshold", "alert_threshold"]
+  lowStockThreshold: ["low_stock_threshold", "lowstockthreshold", "low stock threshold", "threshold", "alert_threshold"],
+  sku: ["sku", "product_sku", "productsku", "product sku", "item_sku", "item sku"]
 });
 
 const REVERSE_HEADER_MAPPINGS = Object.freeze(
@@ -22,8 +23,25 @@ const REVERSE_HEADER_MAPPINGS = Object.freeze(
 );
 
 const REQUIRED_FIELDS = new Set(["name", "category", "price"]);
-const OPTIONAL_FIELDS = new Set(["description", "imageUrl", "imagePublicId", "stockQuantity", "lowStockThreshold"]);
+const OPTIONAL_FIELDS = new Set(["description", "imageUrl", "imagePublicId", "stockQuantity", "lowStockThreshold", "sku"]);
 const ALL_ALLOWED_FIELDS = new Set([...REQUIRED_FIELDS, ...OPTIONAL_FIELDS]);
+
+const ALLOWED_IMAGE_HOSTS = Object.freeze(new Set(["images.unsplash.com", "res.cloudinary.com"]));
+
+function isValidImageUrl(value) {
+  if (typeof value !== "string") return false;
+  const trimmed = value.trim();
+  if (!trimmed) return false;
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+      return false;
+    }
+    return ALLOWED_IMAGE_HOSTS.has(parsed.hostname.toLowerCase());
+  } catch {
+    return false;
+  }
+}
 
 const VALIDATION_RULES = Object.freeze({
   name: {
@@ -68,6 +86,11 @@ const VALIDATION_RULES = Object.freeze({
     min: 0,
     max: 2147483647,
     type: "number"
+  },
+  sku: {
+    required: false,
+    maxLength: 100,
+    type: "string"
   }
 });
 
@@ -213,12 +236,31 @@ function validateRow(row, rowNumber, mappedFields) {
     }
 
     if (field === "imageUrl") {
-      if (rawValue !== null && typeof rawValue !== "string") {
+      if (rawValue !== null && rawValue !== undefined && typeof rawValue !== "string") {
         errors.push(`${field} must be text`);
-      } else if (rawValue && rawValue.length > rules.maxLength) {
-        errors.push(`${field} exceeds maximum length of ${rules.maxLength} characters`);
+      } else if (rawValue !== null && rawValue !== undefined && String(rawValue).trim() !== "") {
+        const strVal = String(rawValue).trim();
+        if (strVal.length > rules.maxLength) {
+          errors.push(`${field} exceeds maximum length of ${rules.maxLength} characters`);
+        } else {
+          let parsed;
+          try {
+            parsed = new URL(strVal);
+          } catch {
+            errors.push(`${field} must be a valid URL`);
+          }
+          if (parsed) {
+            if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+              errors.push(`${field} must use http or https protocol`);
+            } else if (!ALLOWED_IMAGE_HOSTS.has(parsed.hostname.toLowerCase())) {
+              errors.push(`${field} hostname "${parsed.hostname}" is not configured or allowed (must be images.unsplash.com or res.cloudinary.com)`);
+            } else {
+              validatedData[field] = strVal;
+            }
+          }
+        }
       } else {
-        validatedData[field] = rawValue || null;
+        validatedData[field] = null;
       }
     }
 
@@ -265,6 +307,20 @@ function validateRow(row, rowNumber, mappedFields) {
         validatedData[field] = null;
       }
     }
+
+    if (field === "sku") {
+      if (rawValue !== null && rawValue !== undefined && rawValue !== "") {
+        if (typeof rawValue !== "string" && typeof rawValue !== "number") {
+          errors.push(`${field} must be text`);
+        } else if (String(rawValue).trim().length > rules.maxLength) {
+          errors.push(`${field} exceeds maximum length of ${rules.maxLength} characters`);
+        } else {
+          validatedData[field] = String(rawValue).trim();
+        }
+      } else {
+        validatedData[field] = null;
+      }
+    }
   }
 
   // Check for unexpected fields in row
@@ -280,10 +336,19 @@ function validateRow(row, rowNumber, mappedFields) {
 
   const status = errors.length === 0 ? "valid" : "invalid";
 
+  // Retain entered field values so review and edit UI can display and correct invalid rows
+  const displayData = { ...validatedData };
+  for (const [field, header] of mappedFields.entries()) {
+    if (displayData[field] === undefined && row[header] !== undefined) {
+      displayData[field] = row[header];
+    }
+  }
+
   return {
     rowNumber,
     status,
-    data: status === "valid" ? validatedData : null,
+    data: displayData,
+    rawData: row,
     errors,
     warnings
   };
@@ -353,5 +418,7 @@ module.exports = {
   HEADER_MAPPINGS,
   VALIDATION_RULES,
   REQUIRED_FIELDS,
-  OPTIONAL_FIELDS
+  OPTIONAL_FIELDS,
+  ALLOWED_IMAGE_HOSTS,
+  isValidImageUrl
 };

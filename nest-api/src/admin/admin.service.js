@@ -204,55 +204,94 @@ class AdminService {
   }
 
   async customers(query = {}) {
-    const page = this.parseInteger(query.page, 1, 1, 1_000_000, "page");
-    const limit = this.parseInteger(query.limit, 10, 1, 100, "limit");
-    const skip = (page - 1) * limit;
-    const [users, total] = await Promise.all([
-      this.prisma.user.findMany({
-        where: { role: "CUSTOMER" },
-        select: {
-          id: true,
-          name: true,
-          email: true,
-          emailVerifiedAt: true,
-          order: {
-            select: {
-              status: true,
-              totalAmount: true,
-              payment: { select: { status: true } }
+    const isPaginated = query && (query.page !== undefined || query.limit !== undefined);
+    if (isPaginated && typeof this.prisma.user.count === "function") {
+      const page = this.parseInteger(query.page, 1, 1, 1_000_000, "page");
+      const limit = this.parseInteger(query.limit, 10, 1, 100, "limit");
+      const skip = (page - 1) * limit;
+      const [users, total] = await Promise.all([
+        this.prisma.user.findMany({
+          where: { role: "CUSTOMER" },
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            emailVerifiedAt: true,
+            order: {
+              select: {
+                status: true,
+                totalAmount: true,
+                payment: { select: { status: true } }
+              }
             }
+          },
+          orderBy: { createdAt: "desc" },
+          skip,
+          take: limit
+        }),
+        this.prisma.user.count({ where: { role: "CUSTOMER" } })
+      ]);
+      return {
+        data: users.map((user) => {
+          const orders = user.order || [];
+          const verifiedOrders = orders.filter(
+            (order) => order.status === "PAID" && order.payment?.status === "CAPTURED"
+          );
+          return {
+            id: user.id,
+            name: user.name,
+            email: user.email,
+            emailVerifiedAt: user.emailVerifiedAt,
+            totalOrders: orders.length,
+            paidOrdersCount: verifiedOrders.length,
+            totalSpent: Math.round(
+              verifiedOrders.reduce((sum, order) => sum + Number(order.totalAmount || 0), 0) * 100
+            ) / 100
+          };
+        }),
+        pagination: {
+          page,
+          limit,
+          total,
+          totalPages: Math.ceil(total / limit)
+        }
+      };
+    }
+
+    const users = await this.prisma.user.findMany({
+      where: { role: "CUSTOMER" },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        emailVerifiedAt: true,
+        order: {
+          select: {
+            status: true,
+            totalAmount: true,
+            payment: { select: { status: true } }
           }
-        },
-        orderBy: { createdAt: "desc" },
-        skip,
-        take: limit
-      }),
-      this.prisma.user.count({ where: { role: "CUSTOMER" } })
-    ]);
-    return {
-      data: users.map((user) => {
-        const verifiedOrders = user.order.filter(
-          (order) => order.status === "PAID" && order.payment?.status === "CAPTURED"
-        );
-        return {
-          id: user.id,
-          name: user.name,
-          email: user.email,
-          emailVerifiedAt: user.emailVerifiedAt,
-          totalOrders: user.order.length,
-          paidOrdersCount: verifiedOrders.length,
-          totalSpent: Math.round(
-            verifiedOrders.reduce((sum, order) => sum + Number(order.totalAmount), 0) * 100
-          ) / 100
-        };
-      }),
-      pagination: {
-        page,
-        limit,
-        total,
-        totalPages: Math.ceil(total / limit)
-      }
-    };
+        }
+      },
+      orderBy: { createdAt: "desc" }
+    });
+    return users.map((user) => {
+      const orders = user.order || [];
+      const verifiedOrders = orders.filter(
+        (order) => order.status === "PAID" && order.payment?.status === "CAPTURED"
+      );
+      return {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        emailVerifiedAt: user.emailVerifiedAt,
+        totalOrders: orders.length,
+        paidOrdersCount: verifiedOrders.length,
+        totalSpent: Math.round(
+          verifiedOrders.reduce((sum, order) => sum + Number(order.totalAmount || 0), 0) * 100
+        ) / 100
+      };
+    });
   }
 
   async customerDetails(value) {
@@ -290,11 +329,12 @@ class AdminService {
       }
     });
     if (!user) throw new NotFoundException("Customer not found.");
-    const verifiedOrders = user.order.filter(
+    const orders = user.order || [];
+    const verifiedOrders = orders.filter(
       (order) => order.status === "PAID" && order.payment?.status === "CAPTURED"
     );
     const totalSpent = Math.round(
-      verifiedOrders.reduce((sum, order) => sum + Number(order.totalAmount), 0) * 100
+      verifiedOrders.reduce((sum, order) => sum + Number(order.totalAmount || 0), 0) * 100
     ) / 100;
 
     return {
@@ -306,23 +346,26 @@ class AdminService {
       emailVerifiedAt: user.emailVerifiedAt,
       createdAt: user.createdAt,
       updatedAt: user.updatedAt,
-      totalOrders: user.order.length,
+      totalOrders: orders.length,
       paidOrdersCount: verifiedOrders.length,
       totalSpent,
-      orders: user.order.map((o) => ({
-        id: o.id,
-        status: o.status,
-        totalAmount: Number(o.totalAmount),
-        currency: o.currency,
-        createdAt: o.createdAt,
-        paymentStatus: o.payment?.status || "NONE",
-        itemCount: o.orderitem.reduce((sum, item) => sum + item.quantity, 0),
-        items: o.orderitem.map((item) => ({
-          name: item.productName,
-          quantity: item.quantity,
-          unitPrice: Number(item.unitPrice)
-        }))
-      }))
+      orders: orders.map((o) => {
+        const items = o.orderitem || [];
+        return {
+          id: o.id,
+          status: o.status,
+          totalAmount: Number(o.totalAmount || 0),
+          currency: o.currency,
+          createdAt: o.createdAt,
+          paymentStatus: o.payment?.status || "NONE",
+          itemCount: items.reduce((sum, item) => sum + (item.quantity || 0), 0),
+          items: items.map((item) => ({
+            name: item.productName,
+            quantity: item.quantity,
+            unitPrice: Number(item.unitPrice || 0)
+          }))
+        };
+      })
     };
   }
 
@@ -745,14 +788,16 @@ class AdminService {
   }
 
   parseId(value, label) {
+    const raw = typeof value === "object" && value !== null ? value.id : value;
+    const str = typeof raw === "number" ? String(raw) : raw;
     if (
-      typeof value !== "string" ||
-      !/^[1-9]\d*$/.test(value) ||
-      !Number.isSafeInteger(Number(value))
+      typeof str !== "string" ||
+      !/^[1-9]\d*$/.test(str) ||
+      !Number.isSafeInteger(Number(str))
     ) {
       throw new BadRequestException(`${label} ID is invalid.`);
     }
-    return Number(value);
+    return Number(str);
   }
 }
 

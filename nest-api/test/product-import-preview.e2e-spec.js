@@ -1,64 +1,81 @@
 const { BadRequestException, ForbiddenException } = require("@nestjs/common");
 const xlsx = require("xlsx");
+const { parseImportFile } = require("../src/utils/file-parser");
+const { validateImportRows } = require("../src/products/product-import-validator");
+const {
+  detectDuplicates,
+  generateDuplicateSummary,
+} = require("../src/products/product-duplicate-detector");
+const { ProductService, validateProductInput } = require("../src/products/product.service");
+const { ProductController } = require("../src/products/product.controller");
 
 describe("Product import preview API", () => {
   describe("Admin import preview", () => {
     test("should accept valid CSV file", async () => {
-      // This would require actual NestJS testing setup
-      // For now, we'll document the expected behavior
       const csvContent = "name,category,price\nProduct 1,Electronics,10.00\nProduct 2,Clothing,20.00";
       const buffer = Buffer.from(csvContent);
+      const parsed = parseImportFile(buffer, "products.csv", "text/csv");
+      const validated = validateImportRows(parsed);
 
-      // Expected response:
-      // {
-      //   success: true,
-      //   filename: "products.csv",
-      //   headerValidation: { valid: true, missingRequired: [], unexpectedHeaders: [], duplicateMappings: [] },
-      //   rowResults: [
-      //     { rowNumber: 2, status: "valid", data: { name: "Product 1", category: "Electronics", price: 10.00 }, errors: [], warnings: [] },
-      //     { rowNumber: 3, status: "valid", data: { name: "Product 2", category: "Clothing", price: 20.00 }, errors: [], warnings: [] }
-      //   ],
-      //   summary: { total: 2, valid: 2, duplicate: 0, invalid: 0, duplicateBreakdown: { withinFile: 0, existingDatabase: 0 } }
-      // }
-
-      expect(buffer).toBeDefined();
+      expect(validated.headerValidation.valid).toBe(true);
+      expect(validated.rowResults.length).toBe(2);
+      expect(validated.rowResults[0].status).toBe("valid");
+      expect(validated.rowResults[0].data.name).toBe("Product 1");
+      expect(validated.rowResults[1].data.name).toBe("Product 2");
     });
 
     test("should reject invalid file type", async () => {
-      // Expected: BadRequestException with message about invalid file type
-      const errorMessage = "Invalid file type. Only CSV and Excel files are allowed.";
-      expect(errorMessage).toContain("Invalid file type");
+      expect(() => {
+        parseImportFile(Buffer.from("data"), "products.txt", "text/plain");
+      }).toThrow(/File type not supported/);
     });
 
     test("should reject missing required headers", async () => {
-      // Expected: 400 response with headerValidation.valid: false
       const csvContent = "name,category\nProduct 1,Electronics"; // Missing price
       const buffer = Buffer.from(csvContent);
+      const parsed = parseImportFile(buffer, "products.csv", "text/csv");
+      const validated = validateImportRows(parsed);
 
-      // Expected response:
-      // {
-      //   success: false,
-      //   filename: "products.csv",
-      //   headerValidation: { valid: false, missingRequired: ["price"], ... },
-      //   rowResults: [],
-      //   summary: null
-      // }
-
-      expect(buffer).toBeDefined();
+      expect(validated.headerValidation.valid).toBe(false);
+      expect(validated.headerValidation.missingRequired).toContain("price");
     });
 
     test("should detect duplicates within file", async () => {
       const csvContent = "name,category,price\nProduct 1,Electronics,10.00\nProduct 1,Electronics,10.00";
       const buffer = Buffer.from(csvContent);
+      const parsed = parseImportFile(buffer, "products.csv", "text/csv");
+      const validated = validateImportRows(parsed);
+      const mockPrisma = { product: { findMany: async () => [] } };
+      const afterDupes = await detectDuplicates(validated.rowResults, mockPrisma, null);
+      const summary = generateDuplicateSummary(afterDupes);
 
-      // Expected: Second row marked as duplicate with source "uploaded_file"
-      expect(buffer).toBeDefined();
+      expect(afterDupes[0].status).toBe("valid");
+      expect(afterDupes[1].status).toBe("duplicate");
+      expect(afterDupes[1].duplicateSource).toBe("uploaded_file");
+      expect(summary.duplicate).toBe(1);
+      expect(summary.duplicateBreakdown.withinFile).toBe(1);
     });
 
     test("should detect existing database duplicates", async () => {
-      // Expected: Rows matching existing products marked as duplicate with source "existing_database"
-      // and existingProductId populated
-      expect(true).toBe(true);
+      const csvContent = "name,category,price\nExisting Product,Electronics,10.00";
+      const buffer = Buffer.from(csvContent);
+      const parsed = parseImportFile(buffer, "products.csv", "text/csv");
+      const validated = validateImportRows(parsed);
+      const mockPrisma = {
+        product: {
+          findMany: async () => [
+            { id: 99, name: "Existing Product", category: "Electronics" }
+          ]
+        }
+      };
+      const afterDupes = await detectDuplicates(validated.rowResults, mockPrisma, null);
+      const summary = generateDuplicateSummary(afterDupes);
+
+      expect(afterDupes[0].status).toBe("duplicate");
+      expect(afterDupes[0].duplicateSource).toBe("existing_database");
+      expect(afterDupes[0].existingProductId).toBe(99);
+      expect(summary.duplicate).toBe(1);
+      expect(summary.duplicateBreakdown.existingDatabase).toBe(1);
     });
 
     test("should require ADMIN role", async () => {
@@ -217,6 +234,178 @@ describe("Product import preview API", () => {
     test("should not trust managerId from request parameter", async () => {
       // Expected: managerId always from authenticated user session
       expect(true).toBe(true);
+    });
+  });
+
+  describe("Product validation method on ProductService and Import execution", () => {
+    test("this.products.validateProductInput is a function on ProductService instance", () => {
+      const service = new ProductService({});
+      expect(typeof service.validateProductInput).toBe("function");
+      expect(typeof ProductService.validateProductInput).toBe("function");
+    });
+
+    test("validateProductInput validates valid product data and strips/normalizes", () => {
+      const service = new ProductService({});
+      const result = service.validateProductInput({
+        name: "  Keyboard  ",
+        category: "  Electronics  ",
+        price: "199.99",
+        description: "Mechanical keyboard"
+      });
+      expect(result).toMatchObject({
+        name: "Keyboard",
+        category: "Electronics",
+        price: 199.99,
+        description: "Mechanical keyboard",
+        inStock: true
+      });
+    });
+
+    test("validateProductInput rejects invalid fields", () => {
+      const service = new ProductService({});
+      expect(() => service.validateProductInput({ name: "", category: "Cat", price: 10 })).toThrow(BadRequestException);
+      expect(() => service.validateProductInput({ name: "P", category: "", price: 10 })).toThrow(BadRequestException);
+      expect(() => service.validateProductInput({ name: "P", category: "Cat", price: -5 })).toThrow(BadRequestException);
+      expect(() => service.validateProductInput({ name: "P", category: "Cat", price: "abc" })).toThrow(BadRequestException);
+    });
+
+    test("adminImport processes multiple rows with valid, duplicate, and invalid entries and returns structured results", async () => {
+      const createdProducts = [];
+      const mockPrisma = {
+        product: {
+          async findFirst({ where }) {
+            if (where.name === "Existing Product" && where.category === "Electronics") {
+              return { id: 42, name: "Existing Product", category: "Electronics" };
+            }
+            return null;
+          },
+          async create({ data }) {
+            createdProducts.push(data);
+            return { id: createdProducts.length, ...data };
+          }
+        }
+      };
+
+      const mockService = new ProductService({});
+      mockService.prisma = mockPrisma;
+
+      const controller = new ProductController(mockService);
+
+      const request = {
+        body: {
+          products: [
+            // Row 2: Valid product with configured Unsplash image
+            { rowNumber: 2, name: "New Product", category: "Electronics", price: 99.99, stockQuantity: 20, lowStockThreshold: 5, sku: "NEW-123", imageUrl: "https://images.unsplash.com/photo-1505740420928-5e560c06d30e" },
+            // Row 3: Duplicate product (matches existing in DB)
+            { rowNumber: 3, name: "Existing Product", category: "Electronics", price: 50.00 },
+            // Row 4: Invalid price
+            { rowNumber: 4, name: "Invalid Product", category: "Electronics", price: -10 },
+            // Row 5: Invalid stock
+            { rowNumber: 5, name: "Bad Stock Product", category: "Electronics", price: 10, stockQuantity: -5 },
+            // Row 6: Invalid SKU
+            { rowNumber: 6, name: "Bad SKU Product", category: "Electronics", price: 10, sku: "x".repeat(101) },
+            // Row 7: Valid product with missing image (optional image field)
+            { rowNumber: 7, name: "Product Without Image", category: "Office", price: 29.99, imageUrl: "" },
+            // Row 8: Invalid product with unconfigured placeholder image hostname
+            { rowNumber: 8, name: "Notebook Pack", category: "Stationery", price: 15.00, imageUrl: "https://example.com/images/notebook-pack.jpg" }
+          ]
+        }
+      };
+
+      let responseStatus = 0;
+      let responseBody = null;
+      const response = {
+        status(code) {
+          responseStatus = code;
+          return this;
+        },
+        json(body) {
+          responseBody = body;
+          return this;
+        }
+      };
+
+      await controller.adminImport(request, response);
+
+      expect(responseStatus).toBe(200);
+      expect(responseBody.success).toBe(true);
+      expect(responseBody.results.total).toBe(7);
+      expect(responseBody.results.successful).toBe(2);
+      expect(responseBody.results.skipped).toBe(1);
+      expect(responseBody.results.failed).toBe(4);
+
+      expect(createdProducts.length).toBe(2);
+      expect(createdProducts[0].name).toBe("New Product");
+      expect(createdProducts[0].imageUrl).toBe("https://images.unsplash.com/photo-1505740420928-5e560c06d30e");
+      expect(createdProducts[0].stockQuantity).toBe(20);
+      expect(createdProducts[0].inStock).toBe(true);
+
+      // Product without image persisted with imageUrl: null
+      expect(createdProducts[1].name).toBe("Product Without Image");
+      expect(createdProducts[1].imageUrl).toBeNull();
+
+      const errors = responseBody.results.errors;
+      expect(errors).toHaveLength(5); // 1 skipped duplicate + 4 validation errors
+
+      // Duplicate
+      expect(errors.find(e => e.row === 3 && e.field === "name")).toBeDefined();
+      // Invalid price
+      expect(errors.find(e => e.row === 4 && e.field === "price")).toBeDefined();
+      // Invalid stock
+      expect(errors.find(e => e.row === 5 && e.field === "stockQuantity")).toBeDefined();
+      // Invalid SKU
+      expect(errors.find(e => e.row === 6 && e.field === "sku")).toBeDefined();
+      // Invalid Image URL with unconfigured hostname
+      const imageError = errors.find(e => e.row === 8 && e.field === "imageUrl");
+      expect(imageError).toBeDefined();
+      expect(imageError.error).toMatch(/image/i);
+    });
+
+    test("managerImport enforces role permissions and associates products with managerId", async () => {
+      const createdProducts = [];
+      const mockPrisma = {
+        product: {
+          async findFirst() { return null; },
+          async create({ data }) {
+            createdProducts.push(data);
+            return { id: createdProducts.length, ...data };
+          }
+        }
+      };
+
+      const mockService = new ProductService({});
+      mockService.prisma = mockPrisma;
+      const controller = new ProductController(mockService);
+
+      // Forbidden if no CREATE_PRODUCTS permission
+      controller.managerPermissions = async () => [];
+      await expect(
+        controller.managerImport({ user: { id: 7, role: "MANAGER" }, body: { products: [] } }, {})
+      ).rejects.toThrow(ForbiddenException);
+
+      // Allowed with CREATE_PRODUCTS
+      controller.managerPermissions = async () => ["CREATE_PRODUCTS"];
+      const request = {
+        user: { id: 7, role: "MANAGER" },
+        body: {
+          products: [
+            { rowNumber: 2, name: "Manager Item", category: "Stationery", price: 15 }
+          ]
+        }
+      };
+
+      let responseBody = null;
+      const response = {
+        status: () => response,
+        json: (b) => { responseBody = b; return response; }
+      };
+
+      await controller.managerImport(request, response);
+
+      expect(responseBody.success).toBe(true);
+      expect(responseBody.results.successful).toBe(1);
+      expect(createdProducts[0].managerId).toBe(7);
+      expect(createdProducts[0].name).toBe("Manager Item");
     });
   });
 });
