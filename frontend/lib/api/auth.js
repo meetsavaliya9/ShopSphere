@@ -13,11 +13,12 @@ export async function authRequest(path, {
   body,
   csrfToken,
   extraHeaders = {},
-  includeEnvelope = false
+  includeEnvelope = false,
+  fetchImpl = fetch
 } = {}) {
   let response;
   try {
-    response = await fetch(`/api/${path}`, {
+    response = await fetchImpl(`/api/${path}`, {
       method,
       credentials: "same-origin",
       cache: "no-store",
@@ -39,17 +40,32 @@ export async function authRequest(path, {
     );
   }
 
-  let payload;
+  let rawText = "";
+  let payload = null;
   try {
-    payload = await response.json();
+    rawText = await response.text();
+    payload = rawText ? JSON.parse(rawText) : null;
   } catch {
-    throw new AuthRequestError("The account service returned an unreadable response.", response.status);
+    payload = null;
   }
+
   if (!response.ok) {
+    const message =
+      payload?.error?.message ||
+      payload?.message ||
+      (rawText && !rawText.startsWith("<") && rawText.length < 300
+        ? rawText.trim()
+        : null) ||
+      `The request failed with status ${response.status}.`;
+    throw new AuthRequestError(message, response.status);
+  }
+
+  if (payload === null) {
     throw new AuthRequestError(
-      payload?.error?.message || "The request could not be completed.",
+      "The account service returned an unreadable response.",
       response.status
     );
   }
-  return includeEnvelope ? payload : payload.data;
+
+  return includeEnvelope ? payload : (payload.data !== undefined ? payload.data : payload);
 }

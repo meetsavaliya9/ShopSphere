@@ -310,6 +310,25 @@ export default function AdminCustomersPage() {
                     Loading registered customer accounts...
                   </td>
                 </tr>
+              ) : status === "error" ? (
+                <tr>
+                  <td colSpan={6} className="py-12 text-center text-rose-500">
+                    <div className="flex flex-col items-center justify-center gap-2">
+                      <AlertCircle size={24} className="text-rose-500" />
+                      <p className="font-medium text-sm text-rose-600 dark:text-rose-400">
+                        {error || "Failed to load customer accounts."}
+                      </p>
+                      <button
+                        type="button"
+                        onClick={loadCustomers}
+                        className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-rose-200 bg-white px-3 py-1.5 text-xs font-semibold text-rose-700 hover:bg-rose-50 dark:border-rose-900/60 dark:bg-zinc-900 dark:text-rose-300 dark:hover:bg-rose-950/40 transition-colors"
+                      >
+                        <RefreshCw size={12} />
+                        <span>Retry</span>
+                      </button>
+                    </div>
+                  </td>
+                </tr>
               ) : paginatedCustomers.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="py-12 text-center text-zinc-400">

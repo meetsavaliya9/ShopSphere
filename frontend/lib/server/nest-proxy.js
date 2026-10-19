@@ -12,6 +12,9 @@ export async function proxyNestRequest(request, endpoint) {
 
     const method = request.method.toUpperCase();
     const body = method === "GET" || method === "HEAD" ? undefined : await request.arrayBuffer();
+    if (body !== undefined) {
+      headers.set("content-length", String(body.byteLength));
+    }
     const upstream = await fetch(getServiceEndpoint("NEST_API_URL", endpoint), {
       method,
       headers,
@@ -24,7 +27,14 @@ export async function proxyNestRequest(request, endpoint) {
       "content-type": upstream.headers.get("content-type") || "application/json",
       "cache-control": "no-store"
     });
-    for (const cookie of upstream.headers.getSetCookie()) {
+    const contentDisposition = upstream.headers.get("content-disposition");
+    if (contentDisposition) {
+      responseHeaders.set("content-disposition", contentDisposition);
+    }
+    const setCookies = typeof upstream.headers.getSetCookie === "function"
+      ? upstream.headers.getSetCookie()
+      : [];
+    for (const cookie of setCookies) {
       responseHeaders.append("set-cookie", cookie);
     }
     return new Response(await upstream.arrayBuffer(), {

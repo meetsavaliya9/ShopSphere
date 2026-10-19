@@ -11,6 +11,9 @@ function resolveRoute(segments, method) {
   if (path === "inventory/reports" && method === "GET") return "/manager/inventory/reports";
   if (path === "inventory/reports/export" && method === "GET") return "/manager/inventory/reports/export";
   if (path === "products/image" && method === "POST") return "/manager/products/image";
+  if (path === "products/import/preview" && method === "POST") return "/manager/products/import/preview";
+  if (path === "products/import" && method === "POST") return "/manager/products/import";
+  if (path === "products/import/template" && method === "GET") return "/manager/products/import/template";
   if (path === "products" && ["GET", "POST"].includes(method)) return "/manager/products";
   if (path === "categories" && ["GET", "POST"].includes(method)) return "/manager/categories";
   if (path === "orders" && method === "GET") return "/manager/orders";

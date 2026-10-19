@@ -28,7 +28,8 @@ function downloadSampleTemplate() {
   const headers = PRODUCT_FIELDS.map((f) => f.label);
   const sampleData = [
     headers.join(","),
-    "Sample Product,Electronics,99.99,A sample product description,https://example.com/image.jpg,shopsphere/products/sample,100,10",
+    "Wireless Noise-Canceling Headphones,Electronics,12999.00,Premium over-ear headphones with active noise cancellation,https://images.unsplash.com/photo-1505740420928-5e560c06d30e,shopsphere/products/headphones,45,10",
+    "Minimalist Desk Organizer,Office,899.00,Compact bamboo desk organizer with phone stand and cable management,,,50,10",
   ];
 
   const csv = sampleData.join("\n");
@@ -122,29 +123,51 @@ export function ProductImportModal({
     try {
       const endpoint =
         role === "admin"
-          ? "admin/products/import/preview"
-          : "manager/products/import/preview";
+          ? "/api/admin/products/import/preview"
+          : "/api/manager/products/import/preview";
 
       const response = await fetch(endpoint, {
         method: "POST",
         credentials: "same-origin",
         headers: {
-          "X-CSRF-Token": csrfToken,
+          ...(csrfToken ? { "X-CSRF-Token": csrfToken } : {}),
         },
         body: formData,
       });
 
-      const result = await response.json();
+      let result = null;
+      let rawText = "";
+      try {
+        rawText = await response.text();
+        result = rawText ? JSON.parse(rawText) : null;
+      } catch {
+        result = null;
+      }
 
       if (!response.ok) {
-        throw new Error(result?.error?.message || "Failed to parse file");
+        const serverMessage =
+          (result?.headerValidation?.missingRequired?.length
+            ? `Missing required fields: ${result.headerValidation.missingRequired.join(", ")}`
+            : null) ||
+          result?.error?.message ||
+          result?.message ||
+          (rawText && !rawText.startsWith("<") && !rawText.startsWith("{") && rawText.length < 300
+            ? rawText.trim()
+            : null);
+        throw new Error(
+          serverMessage || `Failed to parse file (${response.status})`,
+        );
+      }
+
+      if (!result) {
+        throw new Error("The server returned an unreadable response.");
       }
 
       if (!result.success) {
         throw new Error(
           result.headerValidation?.missingRequired?.length
             ? `Missing required fields: ${result.headerValidation.missingRequired.join(", ")}`
-            : "Invalid file format",
+            : result.error?.message || result.message || "Invalid file format",
         );
       }
 
@@ -235,9 +258,11 @@ export function ProductImportModal({
         method: "POST",
         body: { products: validRows },
         csrfToken,
+        includeEnvelope: true,
       });
 
-      setImportResults(response.results);
+      const results = response?.results || response?.data?.results || response;
+      setImportResults(results);
       setStep("results");
 
       if (onSuccess) onSuccess();

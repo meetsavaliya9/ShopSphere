@@ -32,15 +32,25 @@ async function requestJson(url, options = {}, fetchImpl = fetch) {
     throw new ApiError("The service could not be reached. Please try again.", 502);
   }
 
-  let payload;
+  let rawText = "";
+  let payload = null;
   try {
-    payload = await response.json();
+    rawText = await response.text();
+    payload = rawText ? JSON.parse(rawText) : null;
   } catch {
-    throw new ApiError("The service returned an unreadable response.", response.status);
+    payload = null;
   }
 
   if (!response.ok) {
-    throw new ApiError(errorMessage(payload, `The service returned HTTP ${response.status}.`), response.status);
+    const fallback =
+      rawText && !rawText.startsWith("<") && rawText.length < 300
+        ? rawText.trim()
+        : `The service returned HTTP ${response.status}.`;
+    throw new ApiError(errorMessage(payload, fallback), response.status);
+  }
+
+  if (payload === null) {
+    throw new ApiError("The service returned an unreadable response.", response.status);
   }
 
   return payload;
