@@ -4,7 +4,6 @@ const bcrypt = require("bcryptjs");
 const { createFakeAuthPrisma } = require("./helpers/fake-auth-prisma");
 const { comparePassword } = require("../src/auth/auth.service");
 const { installAuthRequestParsing } = require("../src/auth/auth-request-parsing");
-const { EmailService } = require("../src/auth/email.service");
 const {
   AUTH_SERVICE_OPTIONS,
   AuthService
@@ -106,35 +105,6 @@ describe("Native NestJS authentication", () => {
 
     expect(sentOtps).toHaveLength(0);
     expect(prisma.getUsers()).toHaveLength(0);
-  });
-
-  it("times out SMTP delivery without hanging the request forever", async () => {
-    const sender = new EmailService(() => ({
-      async verify() {
-        const error = new Error("SMTP handshake timed out");
-        error.code = "ETIMEDOUT";
-        throw error;
-      },
-      async sendMail() {
-        throw new Error("should not send");
-      }
-    }));
-    sender.config = {
-      ...require("../src/auth/email.service").getSmtpConfig({
-        SMTP_HOST: "smtp.gmail.com",
-        SMTP_PORT: "587",
-        SMTP_SECURE: "false",
-        SMTP_USER: "test@gmail.com",
-        SMTP_PASSWORD: "abcdefghijklmnop",
-        SMTP_LOCAL_ADDRESS: "0.0.0.0",
-        SMTP_FROM: "ShopSphere <test@gmail.com>"
-      }),
-      from: "ShopSphere <test@gmail.com>"
-    };
-
-    await expect(
-      sender.sendCustomerOtp("customer@example.com", "123456", "registration")
-    ).rejects.toMatchObject({ status: 503 });
   });
 
   it("rejects duplicate registrations for the same email", async () => {
@@ -514,10 +484,9 @@ describe("Native NestJS authentication", () => {
     expect(limited.body.error.message).toBe("Too many authentication attempts. Try again later.");
   });
 
-  it("returns 503 and removes the unverified account when SMTP delivery fails", async () => {
-    emailFailure = Object.assign(new Error("SMTP connection timed out"), {
-      code: "ETIMEDOUT",
-      command: "CONN"
+  it("returns 503 and removes the unverified account when email delivery fails", async () => {
+    emailFailure = Object.assign(new Error("SendGrid request failed"), {
+      code: "ECONNRESET"
     });
     const errorLog = jest.spyOn(console, "error").mockImplementation(() => {});
 
@@ -527,27 +496,67 @@ describe("Native NestJS authentication", () => {
         .set(csrfHeaders())
         .send({
           name: "Pending Customer",
-          email: "smtp-failure@example.com",
+          email: "sendgrid-failure@example.com",
           password: PASSWORD
         })
         .expect(503)
         .expect({
           error: {
-            message: "The verification email could not be sent. Check SMTP configuration and try again later."
+            message: "The verification email could not be sent. Please try again later."
           }
         });
 
-      expect(prisma.getUsers().some((user) => user.email === "smtp-failure@example.com")).toBe(false);
+      expect(prisma.getUsers().some((user) => user.email === "sendgrid-failure@example.com")).toBe(false);
       expect(errorLog).toHaveBeenCalledWith("Customer OTP email delivery failed:", {
         purpose: "registration",
         name: "Error",
-        code: "ETIMEDOUT",
-        command: "CONN",
+        code: "ECONNRESET",
+        command: null,
         responseCode: null,
         syscall: undefined
       });
       expect(JSON.stringify(errorLog.mock.calls)).not.toContain(PASSWORD);
     } finally {
+      emailFailure = undefined;
+      errorLog.mockRestore();
+    }
+  });
+
+  it("preserves the delivery error and clears OTP state when registration cleanup fails", async () => {
+    const originalDelete = prisma.user.delete;
+    emailFailure = new Error("SendGrid request failed");
+    prisma.user.delete = async () => {
+      throw Object.assign(new Error("Database unavailable"), { code: "P1001" });
+    };
+    const errorLog = jest.spyOn(console, "error").mockImplementation(() => {});
+
+    try {
+      await request(app.getHttpServer())
+        .post("/api/v1/auth/register")
+        .set(csrfHeaders())
+        .send({
+          name: "Cleanup Failure Customer",
+          email: "cleanup-failure@example.com",
+          password: PASSWORD
+        })
+        .expect(503)
+        .expect({
+          error: {
+            message: "The verification email could not be sent. Please try again later."
+          }
+        });
+
+      const remainingUser = prisma.getUsers().find((user) => user.email === "cleanup-failure@example.com");
+      expect(remainingUser).toBeDefined();
+      expect(remainingUser.otpChallengeId).toBeNull();
+      expect(remainingUser.otpCodeHash).toBeNull();
+      expect(errorLog).toHaveBeenCalledWith("Registration cleanup failed:", expect.objectContaining({
+        userId: remainingUser.id,
+        code: "P1001"
+      }));
+      expect(JSON.stringify(errorLog.mock.calls)).not.toContain(PASSWORD);
+    } finally {
+      prisma.user.delete = originalDelete;
       emailFailure = undefined;
       errorLog.mockRestore();
     }

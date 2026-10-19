@@ -4,8 +4,9 @@ const NEST_ENV_FILE = path.resolve(__dirname, "../../.env");
 
 const OPTIONAL_FEATURES = [
   {
-    name: "email OTP delivery",
-    variables: ["SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASSWORD", "SMTP_FROM"]
+    name: "SendGrid email OTP delivery",
+    variables: ["SENDGRID_API_KEY"],
+    oneOf: ["SENDGRID_FROM_EMAIL", "SMTP_FROM"]
   },
   {
     name: "Cloudinary product image storage",
@@ -75,26 +76,16 @@ function validateNestEnvironment(environment = process.env, warn = console.warn)
     const missing = feature.variables.filter(
       (name) => typeof environment[name] !== "string" || !environment[name].trim()
     );
+    if (feature.oneOf && !feature.oneOf.some(
+      (name) => typeof environment[name] === "string" && environment[name].trim()
+    )) {
+      missing.push(`one of ${feature.oneOf.join(" or ")}`);
+    }
     if (missing.length) {
       warnings.push(
         `${feature.name} is unavailable until these variables are configured: ${missing.join(", ")}.`
       );
     }
-  }
-
-  if (
-    environment.SMTP_PORT &&
-    (!Number.isInteger(Number(environment.SMTP_PORT)) ||
-      Number(environment.SMTP_PORT) < 1 ||
-      Number(environment.SMTP_PORT) > 65535)
-  ) {
-    warnings.push("SMTP_PORT must be an integer between 1 and 65535; email OTP delivery will fail.");
-  }
-  if (
-    environment.SMTP_SECURE &&
-    !["true", "false"].includes(environment.SMTP_SECURE.toLowerCase())
-  ) {
-    warnings.push("SMTP_SECURE must be true or false; email OTP delivery may fail.");
   }
 
   if (environment.STORE_CURRENCY && !/^[A-Za-z]{3}$/.test(environment.STORE_CURRENCY)) {

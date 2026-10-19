@@ -7,7 +7,7 @@ The existing Next.js frontend uses this NestJS API, Prisma, and MySQL. There is 
 - Node.js 22.15 or newer and npm.
 - A running MySQL server and a private `nest-api/.env` with `DATABASE_URL` pointing to the existing XAMPP `shopsphere` database.
 - `CSRF_SECRET` in `nest-api/.env`, with at least 32 bytes.
-- Optional SMTP, Cloudinary, and Razorpay settings are documented in `.env.example`.
+- Optional SendGrid email, Cloudinary, and Razorpay settings are documented in `.env.example`.
 - `HOST` and `PORT` default to `127.0.0.1` and `3004`.
 
 The configured database contains existing ShopSphere records. Keep `.env` files private; do not reset, drop, recreate, or migrate this database without a reviewed plan and explicit approval.
@@ -27,7 +27,7 @@ The NestJS health endpoint is `http://127.0.0.1:3004/api/v1/health`. The fronten
 
 ## Authentication and privileged accounts
 
-Authentication, products, category management, cart, wishlist, orders, order/payment administration, Razorpay verification, and signed payment webhooks are implemented by NestJS. Customers use OTP for registration and login; existing ADMIN, MANAGER, and INVENTORY_MANAGER accounts log in directly. CSRF, session cookies, role authorization, password hashing, and OTP protections remain enabled. Inventory Manager permissions are stored per account in MySQL, default to none, and are enforced by the manager inventory APIs; Admins manage them in the frontend Roles & Access section.
+Authentication, products, category management, cart, wishlist, orders, order/payment administration, Razorpay verification, and signed payment webhooks are implemented by NestJS. Customer OTP email is delivered through the SendGrid HTTPS API; configure `SENDGRID_API_KEY` and the SendGrid-verified `SENDGRID_FROM_EMAIL` in the backend environment. `SMTP_FROM` is temporarily accepted as a sender-address fallback. Customers use OTP for registration and login; existing ADMIN, MANAGER, and INVENTORY_MANAGER accounts log in directly. CSRF, session cookies, role authorization, password hashing, and OTP protections remain enabled. Inventory Manager permissions are stored per account in MySQL, default to none, and are enforced by the manager inventory APIs; Admins manage them in the frontend Roles & Access section.
 
 Razorpay checkout and webhooks require `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, and `RAZORPAY_WEBHOOK_SECRET`; configure test-mode credentials before checkout testing. Provider-backed payment success is not simulated.
 

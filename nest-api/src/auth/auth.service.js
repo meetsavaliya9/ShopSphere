@@ -92,7 +92,6 @@ class AuthService {
       const challenge = await this.createChallenge(user, "registration");
       console.info("Registration challenge created:", {
         userId: user.id,
-        challengeId: challenge.id,
         elapsedMs: Date.now() - startedAt
       });
       return {
@@ -100,13 +99,20 @@ class AuthService {
         challengeId: challenge.id
       };
     } catch (error) {
-      await this.prisma.user.delete({ where: { id: user.id } });
-      console.error("Registration cleanup after email failure:", {
-        userId: user.id,
-        elapsedMs: Date.now() - startedAt,
-        code: error?.code || null,
-        message: error?.message || "Unknown email error"
-      });
+      try {
+        await this.prisma.user.delete({ where: { id: user.id } });
+        console.info("Registration cleanup succeeded:", {
+          userId: user.id,
+          elapsedMs: Date.now() - startedAt
+        });
+      } catch (cleanupError) {
+        console.error("Registration cleanup failed:", {
+          userId: user.id,
+          elapsedMs: Date.now() - startedAt,
+          code: cleanupError?.code || null,
+          name: cleanupError?.name || "Error"
+        });
+      }
       throw error;
     }
   }
@@ -285,7 +291,7 @@ class AuthService {
         syscall: error?.syscall
       });
       throw new ServiceUnavailableException(
-        "The verification email could not be sent. Check SMTP configuration and try again later.",
+        "The verification email could not be sent. Please try again later.",
         { cause: error }
       );
     }
