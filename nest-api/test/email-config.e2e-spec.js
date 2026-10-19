@@ -1,24 +1,41 @@
 const {
   EmailService,
-  SENDGRID_REQUEST_TIMEOUT_MS,
-  sendGridFailureDetails
+  SMTP_TIMEOUT_MS,
+  classifySmtpError,
+  smtpConfig
 } = require("../src/auth/email.service");
 
-describe("SendGrid email delivery", () => {
+describe("SMTP email delivery", () => {
   const environment = {
-    SENDGRID_API_KEY: "SG.test-sendgrid-key",
-    SENDGRID_FROM_EMAIL: "verified-sender@example.com"
+    SMTP_HOST: "smtp.gmail.com",
+    SMTP_PORT: "587",
+    SMTP_SECURE: "false",
+    SMTP_USER: "sender@example.com",
+    SMTP_PASSWORD: "abcd efgh ijkl mnop",
+    SMTP_FROM: "ShopSphere <sender@example.com>"
   };
 
-  it("sends OTP email through SendGrid and keeps secrets out of logs", async () => {
-    const mailClient = {
-      setApiKey: jest.fn(),
-      setTimeout: jest.fn(),
-      send: jest.fn().mockResolvedValue([{ statusCode: 202 }, {}])
+  it("configures Gmail STARTTLS and sends the existing OTP message", async () => {
+    let transportOptions;
+    let message;
+    const transport = {
+      verify: jest.fn().mockResolvedValue(true),
+      sendMail: jest.fn(async (value) => {
+        message = value;
+        return {
+          accepted: ["private-recipient@example.com"],
+          rejected: [],
+          messageId: "smtp-test-message"
+        };
+      }),
+      close: jest.fn()
     };
     const infoLog = jest.spyOn(console, "info").mockImplementation(() => {});
     const errorLog = jest.spyOn(console, "error").mockImplementation(() => {});
-    const service = new EmailService(mailClient, environment);
+    const service = new EmailService((options) => {
+      transportOptions = options;
+      return transport;
+    }, environment);
 
     await expect(service.sendCustomerOtp(
       "private-recipient@example.com",
@@ -26,32 +43,57 @@ describe("SendGrid email delivery", () => {
       "registration"
     )).resolves.toBeUndefined();
 
-    expect(mailClient.setApiKey).toHaveBeenCalledWith("SG.test-sendgrid-key");
-    expect(mailClient.setTimeout).toHaveBeenCalledWith(SENDGRID_REQUEST_TIMEOUT_MS);
-    expect(mailClient.send).toHaveBeenCalledWith({
-      from: "verified-sender@example.com",
+    expect(transportOptions).toMatchObject({
+      host: "smtp.gmail.com",
+      port: 587,
+      secure: false,
+      requireTLS: true,
+      connectionTimeout: SMTP_TIMEOUT_MS,
+      greetingTimeout: SMTP_TIMEOUT_MS,
+      socketTimeout: SMTP_TIMEOUT_MS,
+      tls: { rejectUnauthorized: true },
+      auth: { user: "sender@example.com", pass: "abcdefghijklmnop" }
+    });
+    expect(message).toEqual({
+      from: "ShopSphere <sender@example.com>",
       to: "private-recipient@example.com",
       subject: "Your ShopSphere verification code",
       text: "Your ShopSphere registration verification code is 123456. It expires in 10 minutes."
     });
+    expect(transport.verify).toHaveBeenCalledTimes(1);
+    expect(transport.close).toHaveBeenCalledTimes(1);
     expect(service.isConfigured()).toBe(true);
+
     const logs = JSON.stringify([...infoLog.mock.calls, ...errorLog.mock.calls]);
-    expect(logs).not.toContain("SG.test-sendgrid-key");
+    expect(logs).not.toContain("abcdefghijklmnop");
     expect(logs).not.toContain("123456");
     expect(logs).not.toContain("private-recipient@example.com");
-
+    expect(logs).not.toContain("sender@example.com");
     infoLog.mockRestore();
     errorLog.mockRestore();
   });
 
-  it("reports missing SendGrid settings as configuration failure without calling the SDK", async () => {
-    const mailClient = {
-      setApiKey: jest.fn(),
-      setTimeout: jest.fn(),
-      send: jest.fn()
+  it.each([
+    ["timeout", Object.assign(new Error("Connection timeout"), { code: "ETIMEDOUT" })],
+    ["authentication", Object.assign(new Error("Invalid credentials sender@example.com"), { code: "EAUTH", responseCode: 535 })],
+    ["network", Object.assign(new Error("Connection reset"), { code: "ECONNRESET" })],
+    ["tls", Object.assign(new Error("TLS negotiation failed"), { code: "ESOCKET" })],
+    ["provider", Object.assign(new Error("SMTP rejected recipient"), { responseCode: 550 })]
+  ])("classifies SMTP %s failures", (category, error) => {
+    expect(classifySmtpError(error)).toBe(category);
+  });
+
+  it("logs SMTP authentication failure safely and propagates a service error", async () => {
+    const transport = {
+      verify: jest.fn().mockRejectedValue(Object.assign(
+        new Error("Authentication failed for sender@example.com password=abcdefghijklmnop"),
+        { code: "EAUTH", responseCode: 535 }
+      )),
+      sendMail: jest.fn(),
+      close: jest.fn()
     };
     const errorLog = jest.spyOn(console, "error").mockImplementation(() => {});
-    const service = new EmailService(mailClient, {});
+    const service = new EmailService(() => transport, environment);
 
     await expect(service.sendCustomerOtp(
       "private-recipient@example.com",
@@ -60,118 +102,38 @@ describe("SendGrid email delivery", () => {
     )).rejects.toMatchObject({
       status: 503,
       emailFailure: {
-        failureType: "configuration",
-        message: "Missing required settings: SENDGRID_API_KEY, SENDGRID_FROM_EMAIL."
+        failureType: "authentication",
+        stage: "connection",
+        code: "EAUTH",
+        responseCode: 535
       }
-    });
-
-    expect(mailClient.setApiKey).not.toHaveBeenCalled();
-    expect(mailClient.send).not.toHaveBeenCalled();
-    expect(JSON.stringify(errorLog.mock.calls)).not.toContain("private-recipient@example.com");
-    errorLog.mockRestore();
-  });
-
-  it("maps SendGrid API failures to a safe service error without logging provider details", async () => {
-    const mailClient = {
-      setApiKey: jest.fn(),
-      setTimeout: jest.fn(),
-      send: jest.fn().mockRejectedValue(Object.assign(
-        new Error("Rejected private-recipient@example.com with key SG.test-sendgrid-key and code 123456"),
-        { code: "ECONNRESET", response: { statusCode: 500 } }
-      ))
-    };
-    const errorLog = jest.spyOn(console, "error").mockImplementation(() => {});
-    const service = new EmailService(mailClient, environment);
-
-    await expect(service.sendCustomerOtp(
-      "private-recipient@example.com",
-      "123456",
-      "registration"
-    )).rejects.toMatchObject({
-      status: 503,
-      message: "Email verification could not be delivered."
     });
 
     const logs = JSON.stringify(errorLog.mock.calls);
-    expect(logs).not.toContain("SG.test-sendgrid-key");
+    expect(logs).not.toContain("abcdefghijklmnop");
     expect(logs).not.toContain("123456");
     expect(logs).not.toContain("private-recipient@example.com");
-    expect(logs).toContain("Rejected [email]");
+    expect(logs).not.toContain("sender@example.com");
+    expect(logs).toContain("authentication");
+    expect(transport.sendMail).not.toHaveBeenCalled();
+    expect(transport.close).toHaveBeenCalledTimes(1);
     errorLog.mockRestore();
   });
 
-  it("extracts a sanitized sender-verification error from the official SDK response shape", async () => {
-    const mailClient = {
-      setApiKey: jest.fn(),
-      setTimeout: jest.fn(),
-      send: jest.fn().mockRejectedValue(Object.assign(new Error("Forbidden"), {
-        code: 403,
-        response: {
-          body: {
-            errors: [{
-              message: "The from address private-sender@example.com is not a verified Sender Identity.",
-              code: "sender_not_verified",
-              field: "from",
-              help: "Verify private-sender@example.com in SendGrid."
-            }]
-          }
-        }
-      }))
-    };
-    const errorLog = jest.spyOn(console, "error").mockImplementation(() => {});
-    const service = new EmailService(mailClient, environment);
-
-    await expect(service.sendCustomerOtp(
-      "private-recipient@example.com",
-      "123456",
-      "registration"
-    )).rejects.toMatchObject({
-      status: 503,
-      emailFailure: {
-        failureType: "sender_verification",
-        statusCode: 403,
-        providerCode: "sender_not_verified",
-        providerField: "from",
-        message: "The from address [email] is not a verified Sender Identity."
-      }
-    });
-
-    const diagnostic = JSON.stringify(errorLog.mock.calls);
-    expect(diagnostic).toContain("sender_verification");
-    expect(diagnostic).toContain("403");
-    expect(diagnostic).toContain("not a verified Sender Identity");
-    expect(diagnostic).toContain("sender_not_verified");
-    expect(diagnostic).not.toContain("private-sender@example.com");
-    expect(diagnostic).not.toContain("private-recipient@example.com");
-    expect(diagnostic).not.toContain("Verify private-sender");
-    errorLog.mockRestore();
+  it("normalizes spaced Gmail App Passwords but preserves non-Gmail passwords", () => {
+    expect(smtpConfig(environment).auth.pass).toBe("abcdefghijklmnop");
+    expect(smtpConfig({
+      ...environment,
+      SMTP_HOST: "mail.example.net"
+    }).auth.pass).toBe("abcd efgh ijkl mnop");
   });
 
-  it.each([
-    ["permission", Object.assign(new Error("Forbidden"), { code: 403 })],
-    ["authentication", Object.assign(new Error("Unauthorized"), { code: 401 })],
-    ["network", Object.assign(new Error("socket hang up"), { code: "ECONNRESET" })],
-    ["timeout", Object.assign(new Error("timeout of 15000ms exceeded"), { code: "ETIMEDOUT" })],
-    ["provider", Object.assign(new Error("Bad Gateway"), { code: 502 })]
-  ])("classifies SendGrid %s failures", (failureType, error) => {
-    expect(sendGridFailureDetails(error, environment.SENDGRID_API_KEY).failureType).toBe(failureType);
-  });
-
-  it("accepts SMTP_FROM as a compatibility fallback for the verified sender", async () => {
-    const mailClient = {
-      setApiKey: jest.fn(),
-      setTimeout: jest.fn(),
-      send: jest.fn().mockResolvedValue([{ statusCode: 202 }, {}])
-    };
-    const service = new EmailService(mailClient, {
-      SENDGRID_API_KEY: "SG.test-sendgrid-key",
-      SMTP_FROM: "ShopSphere <verified-sender@example.com>"
-    });
-
-    expect(service.isConfigured()).toBe(true);
-    await service.sendCustomerOtp("recipient@example.com", "654321", "login");
-    expect(mailClient.send).toHaveBeenCalledWith(expect.objectContaining({
-      from: "ShopSphere <verified-sender@example.com>"
-    }));
+  it("rejects incomplete or invalid SMTP configuration without echoing credentials", () => {
+    expect(() => smtpConfig({
+      ...environment,
+      SMTP_PORT: "invalid"
+    })).toThrow("Email verification is not configured correctly.");
+    expect(() => smtpConfig({ SMTP_PASSWORD: "do-not-log-this-password" }))
+      .toThrow("Email verification is not configured.");
   });
 });

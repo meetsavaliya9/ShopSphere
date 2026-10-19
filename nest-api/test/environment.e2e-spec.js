@@ -37,8 +37,7 @@ describe("NestJS environment validation", () => {
 
     expect(result).toHaveLength(OPTIONAL_FEATURES.length);
     expect(warnings).toHaveLength(OPTIONAL_FEATURES.length);
-    expect(warnings.join("\n")).toContain("SENDGRID_API_KEY");
-    expect(warnings.join("\n")).toContain("SENDGRID_FROM_EMAIL or SMTP_FROM");
+    expect(warnings.join("\n")).toContain("SMTP_HOST");
     expect(warnings.join("\n")).toContain("CLOUDINARY_API_SECRET");
     expect(warnings.join("\n")).toContain("RAZORPAY_WEBHOOK_SECRET");
     expect(warnings.join("\n")).not.toContain("must-not-be-logged");
@@ -47,8 +46,12 @@ describe("NestJS environment validation", () => {
   it("does not require admin or manager password environment variables", () => {
     const warnings = [];
     expect(validateNestEnvironment(minimumEnvironment({
-      SENDGRID_API_KEY: "sendgrid-test-key",
-      SENDGRID_FROM_EMAIL: "noreply@example.com",
+      SMTP_HOST: "smtp.example.com",
+      SMTP_PORT: "587",
+      SMTP_SECURE: "false",
+      SMTP_USER: "mailer",
+      SMTP_PASSWORD: "mailer-secret",
+      SMTP_FROM: "ShopSphere <noreply@example.com>",
       CLOUDINARY_CLOUD_NAME: "cloud",
       CLOUDINARY_API_KEY: "key",
       CLOUDINARY_API_SECRET: "secret",
@@ -60,10 +63,4 @@ describe("NestJS environment validation", () => {
     expect(warnings).toEqual([]);
   });
 
-  it("accepts SMTP_FROM as the compatibility sender while requiring the SendGrid API key", () => {
-    expect(validateNestEnvironment(minimumEnvironment({
-      SENDGRID_API_KEY: "sendgrid-test-key",
-      SMTP_FROM: "ShopSphere <noreply@example.com>"
-    }), () => {})).toHaveLength(OPTIONAL_FEATURES.length - 1);
-  });
 });

@@ -1,141 +1,209 @@
 const { Injectable, ServiceUnavailableException } = require("@nestjs/common");
-const sendgrid = require("@sendgrid/mail");
+const nodemailer = require("nodemailer");
 
-const SENDGRID_REQUEST_TIMEOUT_MS = 15_000;
+const SMTP_TIMEOUT_MS = 15_000;
 
-function safeProviderMessage(message, apiKey) {
-  return String(message || "SendGrid request failed.")
+function senderDomain(sender) {
+  if (typeof sender !== "string" || !sender.trim()) return null;
+  const trimmed = sender.trim();
+  const bracketedAddress = trimmed.match(/<\s*([^<>]+)\s*>/);
+  const address = (bracketedAddress?.[1] || trimmed).trim().toLowerCase();
+  const separator = address.lastIndexOf("@");
+  if (separator < 1) return null;
+  const domain = address.slice(separator + 1);
+  return /^[a-z0-9.-]+$/.test(domain) ? domain : null;
+}
+
+function smtpConfig(environment = process.env) {
+  const required = ["SMTP_HOST", "SMTP_PORT", "SMTP_SECURE", "SMTP_USER", "SMTP_PASSWORD", "SMTP_FROM"];
+  const missing = required.filter((name) => !String(environment[name] ?? "").trim());
+  if (missing.length) {
+    const error = new ServiceUnavailableException("Email verification is not configured.");
+    error.emailFailure = {
+      failureType: "configuration",
+      code: null,
+      responseCode: null,
+      message: `Missing required settings: ${missing.join(", ")}.`
+    };
+    throw error;
+  }
+
+  const port = Number(environment.SMTP_PORT);
+  const secureValue = environment.SMTP_SECURE.trim().toLowerCase();
+  if (!Number.isInteger(port) || port < 1 || port > 65535 || !["true", "false"].includes(secureValue)) {
+    const error = new ServiceUnavailableException("Email verification is not configured correctly.");
+    error.emailFailure = {
+      failureType: "configuration",
+      code: null,
+      responseCode: null,
+      message: "SMTP_PORT must be a valid port and SMTP_SECURE must be true or false."
+    };
+    throw error;
+  }
+
+  const secure = secureValue === "true";
+  const password = environment.SMTP_HOST.trim().toLowerCase() === "smtp.gmail.com"
+    ? environment.SMTP_PASSWORD.replace(/\s/g, "")
+    : environment.SMTP_PASSWORD;
+  return {
+    host: environment.SMTP_HOST.trim(),
+    port,
+    secure,
+    requireTLS: !secure,
+    connectionTimeout: SMTP_TIMEOUT_MS,
+    greetingTimeout: SMTP_TIMEOUT_MS,
+    socketTimeout: SMTP_TIMEOUT_MS,
+    tls: { rejectUnauthorized: true },
+    auth: { user: environment.SMTP_USER.trim(), pass: password },
+    from: environment.SMTP_FROM.trim()
+  };
+}
+
+function classifySmtpError(error) {
+  if (error?.code === "EAUTH" || error?.responseCode === 535) return "authentication";
+  if (error?.code === "ETIMEDOUT" || error?.code === "ECONNABORTED") return "timeout";
+  if (["ECONNECTION", "ECONNREFUSED", "ECONNRESET", "EHOSTUNREACH", "ENETUNREACH"].includes(error?.code)) {
+    return "network";
+  }
+  if (error?.code === "ESOCKET") return "tls";
+  if (error?.responseCode >= 400) return "provider";
+  return "delivery";
+}
+
+function safeSmtpMessage(message, config) {
+  return String(message || "SMTP email delivery failed.")
     .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "[email]")
     .replace(/\b\d{6}\b/g, "[code]")
-    .replace(/\bBearer\s+\S+/gi, "Bearer [redacted]")
     .replace(/\b(password|token|secret|authorization|api[_ -]?key)\s*[:=]\s*("[^"]*"|'[^']*'|[^\s,;]+)/gi, "$1=[redacted]")
-    .replace(/\bSG\.[A-Za-z0-9_-]{12,}/g, "[api-key]")
-    .replaceAll(apiKey || "\0", "[api-key]")
+    .replaceAll(config?.auth?.pass || "\0", "[credential]")
+    .replaceAll(config?.auth?.user || "\0", "[email]")
     .slice(0, 500);
 }
 
-function sendGridFailureDetails(error, apiKey) {
-  const response = error?.response;
-  const responseBody = response?.body;
-  const providerErrors = Array.isArray(responseBody?.errors) ? responseBody.errors : [];
-  const statusCode = Number.isInteger(response?.statusCode)
-    ? response.statusCode
-    : Number.isInteger(error?.code)
-      ? error.code
-      : null;
-  const providerError = providerErrors.find((entry) => entry && typeof entry === "object") || {};
-  const providerMessage = providerErrors
-    .map((entry) => typeof entry?.message === "string" ? entry.message : "")
-    .filter(Boolean)
-    .join("; ");
-  const safeMessage = safeProviderMessage(providerMessage || error?.message, apiKey);
-  const message = safeMessage.toLowerCase();
-  const errorCode = typeof error?.code === "string" ? error.code : null;
-  let failureType = "provider";
-
-  if (
-    errorCode === "ETIMEDOUT" ||
-    errorCode === "ECONNABORTED" ||
-    /timed? ?out|timeout/.test(message)
-  ) {
-    failureType = "timeout";
-  } else if (!statusCode && errorCode) {
-    failureType = "network";
-  } else if (/sender|verified identity|from address/.test(message)) {
-    failureType = "sender_verification";
-  } else if (statusCode === 401) {
-    failureType = "authentication";
-  } else if (statusCode === 403) {
-    failureType = "permission";
-  }
-
+function smtpFailureDetails(error, config, stage) {
   return {
-    failureType,
-    statusCode,
-    providerCode: typeof providerError.code === "string" || typeof providerError.code === "number"
-      ? providerError.code
-      : null,
-    providerField: typeof providerError.field === "string" ? providerError.field : null,
-    code: errorCode,
-    message: safeMessage
+    failureType: classifySmtpError(error),
+    stage,
+    code: typeof error?.code === "string" ? error.code : null,
+    responseCode: Number.isInteger(error?.responseCode) ? error.responseCode : null,
+    message: safeSmtpMessage(error?.message, config)
   };
-}
-
-function emailServiceUnavailable(failure) {
-  const error = new ServiceUnavailableException(
-    failure.failureType === "configuration"
-      ? "Email verification is not configured."
-      : "Email verification could not be delivered.",
-    { cause: failure.cause }
-  );
-  error.emailFailure = {
-    failureType: failure.failureType,
-    statusCode: failure.statusCode ?? null,
-    providerCode: failure.providerCode ?? null,
-    providerField: failure.providerField ?? null,
-    code: failure.code ?? null,
-    message: failure.message
-  };
-  return error;
 }
 
 class EmailService {
-  constructor(mailClient = sendgrid, environment = process.env) {
-    this.mailClient = mailClient;
+  constructor(transportFactory = nodemailer.createTransport, environment = process.env) {
+    this.transportFactory = transportFactory;
     this.environment = environment;
+    const sender = environment.SMTP_FROM?.trim();
+    console.info("SMTP sender configuration:", {
+      senderConfigured: Boolean(sender),
+      senderDomain: senderDomain(sender),
+      hostConfigured: Boolean(environment.SMTP_HOST?.trim()),
+      portConfigured: Boolean(environment.SMTP_PORT?.trim())
+    });
   }
 
   isConfigured() {
-    return Boolean(
-      this.environment.SENDGRID_API_KEY?.trim() &&
-      (this.environment.SENDGRID_FROM_EMAIL?.trim() || this.environment.SMTP_FROM?.trim())
-    );
+    try {
+      smtpConfig(this.environment);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   async sendCustomerOtp(email, code, purpose) {
-    const apiKey = this.environment.SENDGRID_API_KEY?.trim();
-    const sendGridFrom = this.environment.SENDGRID_FROM_EMAIL?.trim();
-    const legacyFrom = this.environment.SMTP_FROM?.trim();
-    const from = sendGridFrom || legacyFrom;
-    const fromVariable = sendGridFrom ? "SENDGRID_FROM_EMAIL" : "SMTP_FROM";
-    if (!apiKey || !from) {
-      const missing = [];
-      if (!apiKey) missing.push("SENDGRID_API_KEY");
-      if (!from) missing.push("SENDGRID_FROM_EMAIL");
-      const failure = {
+    let config;
+    try {
+      config = smtpConfig(this.environment);
+    } catch (error) {
+      console.error("SMTP OTP configuration failed:", error.emailFailure || {
         failureType: "configuration",
-        message: `Missing required setting${missing.length === 1 ? "" : "s"}: ${missing.join(", ")}.`
-      };
-      console.error("SendGrid OTP configuration failed:", failure);
-      throw emailServiceUnavailable(failure);
+        message: "SMTP configuration is invalid."
+      });
+      throw error;
     }
 
     const startedAt = Date.now();
-    console.info("SendGrid OTP delivery started:", { purpose, fromVariable });
+    let transport;
+    let stage = "connection";
+    console.info("SMTP OTP delivery started:", {
+      host: config.host,
+      port: config.port,
+      purpose,
+      recipient: "[redacted]",
+      timeoutMs: SMTP_TIMEOUT_MS
+    });
 
     try {
-      this.mailClient.setApiKey(apiKey);
-      this.mailClient.setTimeout(SENDGRID_REQUEST_TIMEOUT_MS);
-      const [response] = await this.mailClient.send({
-        from,
+      transport = this.transportFactory({
+        host: config.host,
+        port: config.port,
+        secure: config.secure,
+        requireTLS: config.requireTLS,
+        connectionTimeout: config.connectionTimeout,
+        greetingTimeout: config.greetingTimeout,
+        socketTimeout: config.socketTimeout,
+        tls: config.tls,
+        auth: config.auth
+      });
+      if (typeof transport.verify === "function") {
+        await transport.verify();
+        console.info("SMTP connection and authentication verified:", {
+          host: config.host,
+          port: config.port,
+          purpose,
+          elapsedMs: Date.now() - startedAt
+        });
+      }
+
+      stage = "sendMail";
+      const result = await transport.sendMail({
+        from: config.from,
         to: email,
         subject: "Your ShopSphere verification code",
         text: `Your ShopSphere ${purpose} verification code is ${code}. It expires in 10 minutes.`
       });
-      console.info("SendGrid OTP delivery succeeded:", {
+      const acceptedCount = Array.isArray(result?.accepted) ? result.accepted.length : 0;
+      const rejectedCount = Array.isArray(result?.rejected) ? result.rejected.length : 0;
+      if (acceptedCount === 0) {
+        const error = new Error("SMTP server did not accept the recipient.");
+        error.code = "ERECIPIENT";
+        error.acceptedCount = acceptedCount;
+        error.rejectedCount = rejectedCount;
+        throw error;
+      }
+      console.info("SMTP OTP delivery succeeded:", {
+        host: config.host,
+        port: config.port,
         purpose,
         elapsedMs: Date.now() - startedAt,
-        statusCode: response?.statusCode || null
+        recipient: "[redacted]",
+        acceptedCount,
+        rejectedCount,
+        messageId: result.messageId || null
       });
     } catch (error) {
-      const failure = sendGridFailureDetails(error, apiKey);
-      console.error("SendGrid OTP delivery failed:", {
+      const failure = smtpFailureDetails(error, config, stage);
+      console.error("SMTP OTP delivery failed:", {
+        host: config.host,
+        port: config.port,
         purpose,
+        recipient: "[redacted]",
         elapsedMs: Date.now() - startedAt,
         name: error?.name || "Error",
-        ...failure
+        ...failure,
+        acceptedCount: error?.acceptedCount || 0,
+        rejectedCount: error?.rejectedCount || 0
       });
-      throw emailServiceUnavailable({ ...failure, cause: error });
+      const serviceError = new ServiceUnavailableException(
+        "The verification email could not be sent. Please try again later.",
+        { cause: error }
+      );
+      serviceError.emailFailure = failure;
+      throw serviceError;
+    } finally {
+      if (typeof transport?.close === "function") transport.close();
     }
   }
 }
@@ -144,7 +212,9 @@ Injectable()(EmailService);
 
 module.exports = {
   EmailService,
-  SENDGRID_REQUEST_TIMEOUT_MS,
-  safeProviderMessage,
-  sendGridFailureDetails
+  SMTP_TIMEOUT_MS,
+  classifySmtpError,
+  safeSmtpMessage,
+  smtpConfig,
+  smtpFailureDetails
 };
