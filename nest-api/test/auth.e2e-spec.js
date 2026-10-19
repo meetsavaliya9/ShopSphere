@@ -510,10 +510,8 @@ describe("Native NestJS authentication", () => {
       expect(errorLog).toHaveBeenCalledWith("Customer OTP email delivery failed:", {
         purpose: "registration",
         name: "Error",
-        code: "ECONNRESET",
-        command: null,
-        responseCode: null,
-        syscall: undefined
+        failureType: "email_service",
+        code: "ECONNRESET"
       });
       expect(JSON.stringify(errorLog.mock.calls)).not.toContain(PASSWORD);
     } finally {

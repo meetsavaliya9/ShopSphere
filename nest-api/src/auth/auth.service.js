@@ -285,10 +285,10 @@ class AuthService {
       console.error("Customer OTP email delivery failed:", {
         purpose,
         name: error?.name || "Error",
-        code: error?.code || null,
-        command: error?.command || null,
-        responseCode: error?.responseCode || null,
-        syscall: error?.syscall
+        ...(error?.emailFailure || {
+          failureType: "email_service",
+          code: error?.code || null
+        })
       });
       throw new ServiceUnavailableException(
         "The verification email could not be sent. Please try again later.",
