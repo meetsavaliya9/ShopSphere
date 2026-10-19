@@ -15,7 +15,8 @@ function getSmtpConfig(environment = process.env) {
   ) {
     throw new ServiceUnavailableException("Email verification is not configured correctly.");
   }
-  if (environment.SMTP_LOCAL_ADDRESS && !isIP(environment.SMTP_LOCAL_ADDRESS)) {
+  const rawLocalAddress = environment.SMTP_LOCAL_ADDRESS ? String(environment.SMTP_LOCAL_ADDRESS).trim() : "";
+  if (rawLocalAddress && !isIP(rawLocalAddress)) {
     throw new ServiceUnavailableException("Email verification is not configured correctly.");
   }
 
@@ -26,9 +27,7 @@ function getSmtpConfig(environment = process.env) {
     host: SMTP_HOST,
     port: Number(SMTP_PORT),
     secure: String(environment.SMTP_SECURE).toLowerCase() === "true",
-    ...(environment.SMTP_LOCAL_ADDRESS
-      ? { localAddress: environment.SMTP_LOCAL_ADDRESS }
-      : {}),
+    ...(rawLocalAddress ? { localAddress: rawLocalAddress } : {}),
     auth: { user: SMTP_USER, pass: password },
     from: SMTP_FROM
   };

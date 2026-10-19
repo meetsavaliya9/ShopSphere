@@ -57,7 +57,12 @@ async function requestJson(url, options = {}, fetchImpl = fetch) {
 }
 
 function getServiceEndpoint(environmentVariable, path) {
-  const baseUrl = process.env[environmentVariable];
+  const rawBaseUrl =
+    process.env[environmentVariable] ||
+    (environmentVariable === "NEST_API_URL"
+      ? process.env.BACKEND_URL || process.env.API_URL || process.env.NEXT_PUBLIC_NEST_API_URL
+      : undefined);
+  const baseUrl = typeof rawBaseUrl === "string" ? rawBaseUrl.trim() : "";
   if (!baseUrl) {
     throw new ApiError(`${environmentVariable} is not configured on the frontend server.`, 503);
   }
@@ -80,9 +85,14 @@ function getServiceEndpoint(environmentVariable, path) {
     throw new ApiError(`${environmentVariable} must not include a query string or fragment.`, 500);
   }
 
+  const normalizedPath = typeof path === "string" ? path.trim() : "";
+  if (!normalizedPath) {
+    throw new ApiError("The backend API path is invalid.", 500);
+  }
+
   let requestedUrl;
   try {
-    requestedUrl = new URL(path, parsedUrl.origin);
+    requestedUrl = new URL(normalizedPath.startsWith("/") ? normalizedPath : `/${normalizedPath}`, parsedUrl.origin);
   } catch {
     throw new ApiError("The backend API path is invalid.", 500);
   }

@@ -3,19 +3,22 @@ import { ApiError, getServiceEndpoint } from "../api/request.js";
 const NEST_REQUEST_TIMEOUT_MS = 45_000;
 
 export async function proxyNestRequest(request, endpoint) {
+  const method = request.method.toUpperCase();
   try {
     const headers = new Headers();
     for (const name of ["content-type", "cookie", "x-csrf-token", "idempotency-key"]) {
       const value = request.headers.get(name);
       if (value) headers.set(name, value);
     }
+    headers.delete("host");
+    headers.delete("content-length");
 
-    const method = request.method.toUpperCase();
+    const targetUrlString = getServiceEndpoint("NEST_API_URL", endpoint);
+    const targetUrl = new URL(targetUrlString);
+
     const body = method === "GET" || method === "HEAD" ? undefined : await request.arrayBuffer();
-    if (body !== undefined) {
-      headers.set("content-length", String(body.byteLength));
-    }
-    const upstream = await fetch(getServiceEndpoint("NEST_API_URL", endpoint), {
+
+    const upstream = await fetch(targetUrl.toString(), {
       method,
       headers,
       body,
@@ -23,6 +26,16 @@ export async function proxyNestRequest(request, endpoint) {
       redirect: "manual",
       signal: AbortSignal.timeout(NEST_REQUEST_TIMEOUT_MS)
     });
+
+    if (!upstream.ok) {
+      console.warn("NestJS upstream response warning:", {
+        targetHost: targetUrl.hostname,
+        targetPath: targetUrl.pathname,
+        method,
+        upstreamStatus: upstream.status
+      });
+    }
+
     const responseHeaders = new Headers({
       "content-type": upstream.headers.get("content-type") || "application/json",
       "cache-control": "no-store"
@@ -50,11 +63,24 @@ export async function proxyNestRequest(request, endpoint) {
         : isTimeout
           ? "The account service took too long to respond. Please try again."
           : "The account service could not be reached. Please try again.";
+
+    let targetHost = "unconfigured";
+    let targetPath = endpoint;
+    try {
+      const resolved = new URL(getServiceEndpoint("NEST_API_URL", endpoint));
+      targetHost = resolved.hostname;
+      targetPath = resolved.pathname;
+    } catch {
+      // Configuration or URL parse error
+    }
+
     console.error("NestJS proxy request failed:", {
-      endpoint,
+      targetHost,
+      targetPath,
+      method,
       status,
-      error: isTimeout ? "request_timeout" : error instanceof Error ? error.name : "Unknown error",
-      code: error?.code
+      errorName: isTimeout ? "TimeoutError" : error instanceof Error ? error.name : "UnknownError",
+      errorCode: error?.code || null
     });
     return Response.json({ error: { message } }, { status });
   }
