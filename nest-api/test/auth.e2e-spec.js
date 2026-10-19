@@ -4,6 +4,7 @@ const bcrypt = require("bcryptjs");
 const { createFakeAuthPrisma } = require("./helpers/fake-auth-prisma");
 const { comparePassword } = require("../src/auth/auth.service");
 const { installAuthRequestParsing } = require("../src/auth/auth-request-parsing");
+const { EmailService } = require("../src/auth/email.service");
 const {
   AUTH_SERVICE_OPTIONS,
   AuthService
@@ -107,6 +108,50 @@ describe("Native NestJS authentication", () => {
     expect(prisma.getUsers()).toHaveLength(0);
   });
 
+  it("times out SMTP delivery without hanging the request forever", async () => {
+    const sender = new EmailService(() => ({
+      async verify() {
+        const error = new Error("SMTP handshake timed out");
+        error.code = "ETIMEDOUT";
+        throw error;
+      },
+      async sendMail() {
+        throw new Error("should not send");
+      }
+    }));
+    sender.config = {
+      ...require("../src/auth/email.service").getSmtpConfig({
+        SMTP_HOST: "smtp.gmail.com",
+        SMTP_PORT: "587",
+        SMTP_SECURE: "false",
+        SMTP_USER: "test@gmail.com",
+        SMTP_PASSWORD: "abcdefghijklmnop",
+        SMTP_LOCAL_ADDRESS: "0.0.0.0",
+        SMTP_FROM: "ShopSphere <test@gmail.com>"
+      }),
+      from: "ShopSphere <test@gmail.com>"
+    };
+
+    await expect(
+      sender.sendCustomerOtp("customer@example.com", "123456", "registration")
+    ).rejects.toMatchObject({ status: 503 });
+  });
+
+  it("rejects duplicate registrations for the same email", async () => {
+    await request(app.getHttpServer())
+      .post("/api/v1/auth/register")
+      .set(csrfHeaders())
+      .send({ name: "First Customer", email: "duplicate@example.com", password: PASSWORD })
+      .expect(202);
+
+    await request(app.getHttpServer())
+      .post("/api/v1/auth/register")
+      .set(csrfHeaders())
+      .send({ name: "Second Customer", email: "duplicate@example.com", password: PASSWORD })
+      .expect(409)
+      .expect({ error: { message: "An account with this email already exists." } });
+  });
+
   it("registers, verifies a customer OTP, creates a session, and returns the existing API shapes", async () => {
     const registration = await request(app.getHttpServer())
       .post("/api/v1/auth/register")
@@ -135,11 +180,10 @@ describe("Native NestJS authentication", () => {
       .set(csrfHeaders())
       .send({
         challengeId: registration.body.data.challengeId,
-        code: sentOtps[0].code
+        code: sentOtps.at(-1).code
       })
       .expect(200);
     expect(verification.body.data.user).toMatchObject({
-      id: 1,
       name: "Native Customer",
       email: "customer@example.com",
       role: "CUSTOMER",
@@ -148,7 +192,8 @@ describe("Native NestJS authentication", () => {
 
     const sessionCookie = cookiePair(verification, "shopsphere_session");
     expect(sessionCookie).toMatch(/^shopsphere_session=.{32,}$/);
-    const storedSession = prisma.getSessions().find((session) => session.userId === 1);
+    const registeredUser = prisma.getUsers().find((user) => user.email === "customer@example.com");
+    const storedSession = prisma.getSessions().find((session) => session.userId === registeredUser.id);
     expect(storedSession.id).toMatch(/^[a-f0-9]{64}$/);
     expect(storedSession).not.toHaveProperty("tokenHash");
     await request(app.getHttpServer())
@@ -172,7 +217,7 @@ describe("Native NestJS authentication", () => {
       .set(csrfHeaders())
       .send({
         challengeId: registration.body.data.challengeId,
-        code: sentOtps[0].code
+        code: sentOtps.at(-1).code
       })
       .expect(400)
       .expect({ error: { message: "The verification code is invalid or expired." } });

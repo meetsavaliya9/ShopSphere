@@ -58,6 +58,11 @@ class AuthService {
   async register(input) {
     const email = normalizeEmail(input.email);
     let user;
+    const startedAt = Date.now();
+    console.info("Registration request started:", {
+      emailDomain: email.includes("@") ? email.split("@", 2)[1] : "[redacted]",
+      purpose: "registration"
+    });
     try {
       user = await this.prisma.user.create({
         data: {
@@ -68,19 +73,40 @@ class AuthService {
           updatedAt: this.now()
         }
       });
+      console.info("Registration account persisted:", {
+        userId: user.id,
+        elapsedMs: Date.now() - startedAt
+      });
     } catch (error) {
       if (error?.code === "P2002") throw new ConflictException("An account with this email already exists.");
+      console.error("Registration database failure:", {
+        emailDomain: email.includes("@") ? email.split("@", 2)[1] : "[redacted]",
+        code: error?.code || null,
+        message: error?.message || "Unknown database error",
+        elapsedMs: Date.now() - startedAt
+      });
       throw error;
     }
 
     try {
       const challenge = await this.createChallenge(user, "registration");
+      console.info("Registration challenge created:", {
+        userId: user.id,
+        challengeId: challenge.id,
+        elapsedMs: Date.now() - startedAt
+      });
       return {
         message: "A verification code has been sent to your email.",
         challengeId: challenge.id
       };
     } catch (error) {
       await this.prisma.user.delete({ where: { id: user.id } });
+      console.error("Registration cleanup after email failure:", {
+        userId: user.id,
+        elapsedMs: Date.now() - startedAt,
+        code: error?.code || null,
+        message: error?.message || "Unknown email error"
+      });
       throw error;
     }
   }

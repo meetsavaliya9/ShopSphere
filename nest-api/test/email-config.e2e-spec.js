@@ -22,6 +22,7 @@ describe("SMTP configuration", () => {
     const sender = new EmailService((options) => {
       transportOptions = options;
       return {
+        async verify() { return true; },
         async sendMail() {
           return {
             accepted: ["customer@example.com"],
@@ -37,6 +38,10 @@ describe("SMTP configuration", () => {
       host: "smtp.gmail.com",
       port: 587,
       secure: false,
+      requireTLS: true,
+      connectionTimeout: 15000,
+      greetingTimeout: 15000,
+      socketTimeout: 15000,
       localAddress: "0.0.0.0",
       auth: { user: "shopsphere@example.com", pass: "abcdefghijklmnop" }
     });
@@ -44,6 +49,7 @@ describe("SMTP configuration", () => {
 
   it("fails delivery when SMTP resolves but rejects the recipient", async () => {
     const sender = new EmailService(() => ({
+      async verify() { return true; },
       async sendMail() {
         return {
           accepted: [],
@@ -99,6 +105,24 @@ describe("SMTP configuration", () => {
     expect(classifySmtpError({ code: "ESOCKET" })).toBe("tls");
     expect(classifySmtpError({ responseCode: 550 })).toBe("sender_or_recipient_rejected");
     expect(classifySmtpError({ responseCode: 451 })).toBe("provider_rejected");
+  });
+
+  it("surfaces SMTP authentication failures as a safe service error", async () => {
+    const sender = new EmailService(() => ({
+      async verify() {
+        const error = new Error("535-5.7.8 Username and Password not accepted");
+        error.code = "EAUTH";
+        error.responseCode = 535;
+        throw error;
+      },
+      async sendMail() {
+        throw new Error("should not send");
+      }
+    }));
+    sender.config = { ...getSmtpConfig(baseEnvironment), from: baseEnvironment.SMTP_FROM };
+
+    await expect(sender.sendCustomerOtp("customer@example.com", "123456", "registration"))
+      .rejects.toMatchObject({ status: 503 });
   });
 
   it("redacts addresses, one-time codes, and SMTP credentials from diagnostics", () => {

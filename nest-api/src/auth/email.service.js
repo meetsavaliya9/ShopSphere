@@ -2,6 +2,20 @@ const { Injectable, ServiceUnavailableException } = require("@nestjs/common");
 const nodemailer = require("nodemailer");
 const { isIP } = require("node:net");
 
+const DEFAULT_SMTP_TIMEOUT_MS = 15_000;
+
+function smtpTimeoutMs(environment = process.env) {
+  const value = Number(environment.SMTP_TIMEOUT_MS ?? DEFAULT_SMTP_TIMEOUT_MS);
+  if (!Number.isFinite(value) || value < 1_000 || value > 60_000) {
+    return DEFAULT_SMTP_TIMEOUT_MS;
+  }
+  return value;
+}
+
+function redactedEmail(email) {
+  return "[redacted]";
+}
+
 function getSmtpConfig(environment = process.env) {
   const { SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, SMTP_FROM } = environment;
   if (
@@ -23,11 +37,18 @@ function getSmtpConfig(environment = process.env) {
   const password = SMTP_HOST.toLowerCase() === "smtp.gmail.com"
     ? SMTP_PASSWORD.replace(/\s/g, "")
     : SMTP_PASSWORD;
+  const secure = String(environment.SMTP_SECURE).toLowerCase() === "true";
+  const timeoutMs = smtpTimeoutMs(environment);
   return {
     host: SMTP_HOST,
     port: Number(SMTP_PORT),
-    secure: String(environment.SMTP_SECURE).toLowerCase() === "true",
+    secure,
+    requireTLS: !secure,
+    connectionTimeout: timeoutMs,
+    greetingTimeout: timeoutMs,
+    socketTimeout: timeoutMs,
     ...(rawLocalAddress ? { localAddress: rawLocalAddress } : {}),
+    tls: { rejectUnauthorized: true },
     auth: { user: SMTP_USER, pass: password },
     from: SMTP_FROM
   };
@@ -76,13 +97,36 @@ class EmailService {
       this.transport = this.transportFactory(transportConfig);
     }
 
+    const startedAt = Date.now();
+    const recipientSummary = redactedEmail(email);
     console.info("SMTP OTP delivery attempt:", {
       host: this.config.host,
       port: this.config.port,
-      recipient: "[redacted]"
+      purpose,
+      recipient: recipientSummary,
+      timeoutMs: smtpTimeoutMs(this.config)
     });
 
     try {
+      if (typeof this.transport.verify === "function") {
+        const verifyStartedAt = Date.now();
+        await this.transport.verify();
+        console.info("SMTP OTP connection verified:", {
+          host: this.config.host,
+          port: this.config.port,
+          purpose,
+          elapsedMs: Date.now() - verifyStartedAt,
+          recipient: recipientSummary
+        });
+      } else {
+        console.info("SMTP OTP verification skipped for custom transport:", {
+          host: this.config.host,
+          port: this.config.port,
+          purpose,
+          recipient: recipientSummary
+        });
+      }
+
       const result = await this.transport.sendMail({
         from: this.config.from,
         to: email,
@@ -99,10 +143,12 @@ class EmailService {
         error.messageId = result?.messageId;
         throw error;
       }
-      console.info("SMTP OTP delivery accepted:", {
+      console.info("SMTP OTP delivery succeeded:", {
         host: this.config.host,
         port: this.config.port,
-        recipient: "[redacted]",
+        purpose,
+        elapsedMs: Date.now() - startedAt,
+        recipient: recipientSummary,
         acceptedCount,
         rejectedCount,
         messageId: result.messageId || null
@@ -113,7 +159,10 @@ class EmailService {
       console.error("SMTP OTP delivery failed:", {
         host: this.config.host,
         port: this.config.port,
-        recipient: "[redacted]",
+        purpose,
+        stage: error?.stage || "sendMail",
+        recipient: recipientSummary,
+        elapsedMs: Date.now() - startedAt,
         category,
         code: error?.code || null,
         responseCode: error?.responseCode || null,
@@ -133,8 +182,11 @@ class EmailService {
 Injectable()(EmailService);
 
 module.exports = {
+  DEFAULT_SMTP_TIMEOUT_MS,
   EmailService,
   classifySmtpError,
   getSmtpConfig,
-  sanitizeSmtpMessage
+  redactedEmail,
+  sanitizeSmtpMessage,
+  smtpTimeoutMs
 };
