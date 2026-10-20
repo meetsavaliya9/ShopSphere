@@ -485,7 +485,7 @@ describe("Native NestJS authentication", () => {
   });
 
   it("returns 503 and removes the unverified account when email delivery fails", async () => {
-    emailFailure = Object.assign(new Error("SendGrid request failed"), {
+    emailFailure = Object.assign(new Error("SMTP request failed"), {
       code: "ECONNRESET"
     });
     const errorLog = jest.spyOn(console, "error").mockImplementation(() => {});
@@ -496,7 +496,7 @@ describe("Native NestJS authentication", () => {
         .set(csrfHeaders())
         .send({
           name: "Pending Customer",
-          email: "sendgrid-failure@example.com",
+          email: "smtp-failure@example.com",
           password: PASSWORD
         })
         .expect(503)
@@ -506,7 +506,7 @@ describe("Native NestJS authentication", () => {
           }
         });
 
-      expect(prisma.getUsers().some((user) => user.email === "sendgrid-failure@example.com")).toBe(false);
+      expect(prisma.getUsers().some((user) => user.email === "smtp-failure@example.com")).toBe(false);
       expect(errorLog).toHaveBeenCalledWith("Customer OTP email delivery failed:", {
         purpose: "registration",
         name: "Error",
@@ -522,7 +522,7 @@ describe("Native NestJS authentication", () => {
 
   it("preserves the delivery error and clears OTP state when registration cleanup fails", async () => {
     const originalDelete = prisma.user.delete;
-    emailFailure = new Error("SendGrid request failed");
+    emailFailure = new Error("SMTP request failed");
     prisma.user.delete = async () => {
       throw Object.assign(new Error("Database unavailable"), { code: "P1001" });
     };
